@@ -175,15 +175,19 @@ function BrainDumpRecorder({ onComplete, minimumSeconds }: { onComplete: () => v
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const processorRef = useRef<AudioWorkletNode | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const checkinIdRef = useRef<string | null>(null);
   const startedAtRef = useRef<number>(0);
   const recordedMsRef = useRef(0);
-  const shouldSaveRef = useRef(false);
+
+  const apiBase = (import.meta.env.VITE_VOCAL_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+  const apiToken = import.meta.env.VITE_VOCAL_API_TOKEN ?? "development-token";
 
   useEffect(() => {
     if (!recording) return;
@@ -197,84 +201,130 @@ function BrainDumpRecorder({ onComplete, minimumSeconds }: { onComplete: () => v
 
   useEffect(() => {
     return () => {
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      socketRef.current?.close();
+      processorRef.current?.disconnect();
+      sourceRef.current?.disconnect();
+      audioContextRef.current?.close();
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
-  }, [audioUrl]);
+  }, []);
+
+  function headers() {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${apiToken}` };
+  }
+
+  async function openStream(checkinId: string, ticket: string) {
+    const streamUrl = new URL(`${apiBase}/v1/checkins/${checkinId}/stream`);
+    streamUrl.protocol = streamUrl.protocol === "https:" ? "wss:" : "ws:";
+    streamUrl.searchParams.set("ticket", ticket);
+    const socket = new WebSocket(streamUrl);
+    socket.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      socket.onopen = () => resolve();
+      socket.onerror = () => reject(new Error("Could not open the secure audio stream."));
+    });
+    socket.onmessage = (event) => {
+      const message = JSON.parse(event.data) as { type?: string; message?: string };
+      if (message.type === "error") setError(message.message ?? "Audio processing is unavailable right now.");
+    };
+    socketRef.current = socket;
+    socket.send(JSON.stringify({ type: "checkin.start", sample_rate: 16000, encoding: "pcm_s16le" }));
+    return socket;
+  }
+
+  function stopCapture() {
+    processorRef.current?.disconnect();
+    sourceRef.current?.disconnect();
+    void audioContextRef.current?.close();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    processorRef.current = null;
+    sourceRef.current = null;
+    audioContextRef.current = null;
+    streamRef.current = null;
+  }
 
   async function startRecording() {
     setError(null);
     setSaved(false);
-    shouldSaveRef.current = false;
 
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setError("Audio recording is not available in this browser.");
+    if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) {
+      setError("Live audio recording is not available in this browser.");
       return;
     }
 
     try {
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      const created = await fetch(`${apiBase}/v1/checkins`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ source: "morning-check-in" }),
+      });
+      if (!created.ok) throw new Error("Could not create a Morning Check-in.");
+      const { checkin, stream_ticket: ticket } = await created.json() as { checkin: { id: string }; stream_ticket: string };
+      const socket = await openStream(checkin.id, ticket);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      chunksRef.current = [];
       streamRef.current = stream;
-      recorderRef.current = recorder;
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
+      const context = new AudioContext();
+      await context.audioWorklet.addModule("/pcm-processor.js");
+      const source = context.createMediaStreamSource(stream);
+      const processor = new AudioWorkletNode(context, "pcm-processor", { processorOptions: { targetRate: 16000 } });
+      processor.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
+        if (socket.readyState === WebSocket.OPEN) socket.send(event.data);
       };
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        const url = URL.createObjectURL(blob);
-        setAudioUrl(url);
-        stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-        setRecording(false);
-        setPaused(false);
-
-        if (shouldSaveRef.current) {
-          const link = document.createElement("a");
-          link.href = url;
-          link.download = `morning-check-in-${new Date().toISOString().slice(0, 10)}.webm`;
-          link.click();
-          shouldSaveRef.current = false;
-          setSaved(true);
-          onComplete();
-        }
-      };
+      source.connect(processor);
+      processor.connect(context.destination);
+      audioContextRef.current = context;
+      sourceRef.current = source;
+      processorRef.current = processor;
+      checkinIdRef.current = checkin.id;
       startedAtRef.current = Date.now();
       recordedMsRef.current = 0;
       setElapsed(0);
-      recorder.start();
       setRecording(true);
     } catch {
-      setError("Microphone access is needed to record your Morning Check-in.");
+      stopCapture();
+      socketRef.current?.close();
+      setError("Microphone access and the private check-in service are needed to record.");
     }
   }
 
   function pauseRecording() {
-    const recorder = recorderRef.current;
-    if (!recorder || recorder.state !== "recording") return;
+    const context = audioContextRef.current;
+    if (!context || !recording) return;
     recordedMsRef.current += Date.now() - startedAtRef.current;
     setElapsed(Math.floor(recordedMsRef.current / 1000));
-    recorder.pause();
+    void context.suspend();
+    socketRef.current?.send(JSON.stringify({ type: "checkin.pause" }));
     setRecording(false);
     setPaused(true);
   }
 
   function resumeRecording() {
-    const recorder = recorderRef.current;
-    if (!recorder || recorder.state !== "paused") return;
+    const context = audioContextRef.current;
+    if (!context || !paused) return;
     startedAtRef.current = Date.now();
-    recorder.resume();
+    void context.resume();
+    socketRef.current?.send(JSON.stringify({ type: "checkin.resume" }));
     setPaused(false);
     setRecording(true);
   }
 
-  function savePausedRecording() {
-    const recorder = recorderRef.current;
-    if (!recorder || !paused || elapsed < minimumSeconds) return;
-    shouldSaveRef.current = true;
-    recorder.stop();
+  async function savePausedRecording() {
+    if (!paused || elapsed < minimumSeconds || !checkinIdRef.current) return;
+    const checkinId = checkinIdRef.current;
+    socketRef.current?.send(JSON.stringify({ type: "checkin.end" }));
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    socketRef.current?.close();
+    socketRef.current = null;
+    stopCapture();
+    setPaused(false);
+    try {
+      const finished = await fetch(`${apiBase}/v1/checkins/${checkinId}/finish`, { method: "POST", headers: headers() });
+      if (!finished.ok) throw new Error("Could not save the recording.");
+      setSaved(true);
+      onComplete();
+    } catch {
+      setError("Your recording could not be saved. Please try again.");
+    }
   }
 
   const formattedTime = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
