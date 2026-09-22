@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { MicrophoneIcon } from "@phosphor-icons/react";
 import {
   ActivityLogIcon,
@@ -44,6 +44,7 @@ export default function Prototype() {
   const [tab, setTab] = useState<Tab>("today");
   const [completed, setCompleted] = useState<Set<string>>(() => new Set());
   const [brainOpen, setBrainOpen] = useState(false);
+  const [brainTranscript, setBrainTranscript] = useState<string | null>(null);
   const [frequency, setFrequency] = useState<Frequency>("Daily");
   const [addHabitOpen, setAddHabitOpen] = useState(true);
 
@@ -56,8 +57,9 @@ export default function Prototype() {
     });
   }
 
-  function completeBrainDump() {
+  function completeBrainDump(transcript: string | null) {
     setCompleted((current) => new Set(current).add("brain"));
+    setBrainTranscript(transcript);
   }
 
   return (
@@ -89,6 +91,7 @@ export default function Prototype() {
             setBrainOpen(false);
             setTab("trends");
           }}
+          transcript={brainTranscript}
         />
       ) : null}
 
@@ -159,7 +162,7 @@ function TodayScreen({ completed, brainOpen, frequency, addHabitOpen, onToggle, 
   );
 }
 
-function MorningCheckInOverlay({ onClose, onComplete, onViewData }: { onClose: () => void; onComplete: () => void; onViewData: () => void }) {
+function MorningCheckInOverlay({ onClose, onComplete, onViewData, transcript }: { onClose: () => void; onComplete: (transcript: string | null) => void; onViewData: () => void; transcript: string | null }) {
   return (
     <section className="morning-checkin-overlay" aria-label="Morning Check-in">
       <header className="checkin-header">
@@ -167,17 +170,37 @@ function MorningCheckInOverlay({ onClose, onComplete, onViewData }: { onClose: (
           <Cross1Icon width={22} height={22} />
         </button>
         <p className="eyebrow"><span>Morning Check-in</span></p>
-        <h1>How's your health?</h1>
-        <p>Externalizing thoughts reduces stress and clears working memory. Your voice is analyzed for wellness indicators, not diagnoses.</p>
+        {transcript === null ? (
+          <>
+            <h1>How's your health?</h1>
+            <p>Externalizing thoughts reduces stress and clears working memory. Your voice is analyzed for wellness indicators, not diagnoses.</p>
+          </>
+        ) : (
+          <h1>Your reflection</h1>
+        )}
       </header>
-      <BrainDumpRecorder onComplete={onComplete} onViewData={onViewData} minimumSeconds={30} />
+      {transcript === null ? (
+        <BrainDumpRecorder onComplete={onComplete} onViewData={onViewData} minimumSeconds={30} />
+      ) : (
+        <CheckInTranscript transcript={transcript} />
+      )}
+    </section>
+  );
+}
+
+function CheckInTranscript({ transcript }: { transcript: string }) {
+  return (
+    <section className="brain-dump checkin-transcript" aria-label="Morning Check-in transcript">
+      <div className="transcript-box">
+        <p>{transcript.trim().length > 0 ? transcript : "No transcript was captured for this check-in."}</p>
+      </div>
     </section>
   );
 }
 
 type ActivityStep = { id: number; text: string };
 
-function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onComplete: () => void; onViewData: () => void; minimumSeconds: number }) {
+function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onComplete: (transcript: string | null) => void; onViewData: () => void; minimumSeconds: number }) {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -248,9 +271,10 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
     try {
       const finished = await fetch(`${apiBase}/v1/checkins/${checkinId}/finish`, { method: "POST", headers: headers() });
       if (!finished.ok) throw new Error("Could not save the recording.");
+      const payload = await finished.json() as { transcript?: string | null };
       setProcessing(false);
       setSaved(true);
-      onComplete();
+      onComplete(payload.transcript ?? null);
     } catch {
       setProcessing(false);
       setError("Your recording could not be saved. Please try again.");
@@ -460,12 +484,210 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
   );
 }
 
+type SignalPoint = {
+  signal_name: string;
+  recorded_at: string;
+  score: number;
+  level: string;
+  flagged: boolean;
+  latest_score: number | null;
+  baseline_score: number | null;
+  deviation_from_baseline: number | null;
+  anomaly: boolean | null;
+  z_score: number | null;
+  population_z: number | null;
+};
+
+const SIGNAL_LABELS: Record<string, string> = {
+  "mood-disruption": "Mood disruption",
+  "anxiety": "Anxiety",
+  "stress": "Stress",
+  "fatigue": "Fatigue",
+  "dehydration": "Dehydration",
+  "elevated-blood-pressure": "Elevated blood pressure",
+};
+
+const SIGNAL_ORDER = ["mood-disruption", "anxiety", "stress", "fatigue", "dehydration", "elevated-blood-pressure"];
+
+const LEVEL_ORDER = ["none", "low", "consider", "moderate"];
+const LEVEL_RANK: Record<string, number> = Object.fromEntries(LEVEL_ORDER.map((level, index) => [level, index]));
+
+function levelRank(level: string) {
+  return LEVEL_RANK[level] ?? LEVEL_ORDER.length - 1;
+}
+
+function capitalizeLevel(level: string) {
+  return level.length ? level[0].toUpperCase() + level.slice(1) : level;
+}
+
+function average(values: number[]) {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function trendDirection(ranks: number[]): "down" | "up" | "stable" {
+  const span = Math.max(1, Math.floor(ranks.length / 3));
+  const delta = average(ranks.slice(-span)) - average(ranks.slice(0, span));
+  if (Math.abs(delta) < 0.4) return "stable";
+  return delta < 0 ? "down" : "up";
+}
+
+function formatDay(recordedAt: string) {
+  return new Date(recordedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 function TrendsScreen() {
+  const [signals, setSignals] = useState<Record<string, SignalPoint[]> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const apiBase = (import.meta.env.VITE_VOCAL_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+    const apiToken = import.meta.env.VITE_VOCAL_API_TOKEN ?? "development-token";
+    let cancelled = false;
+    fetch(`${apiBase}/v1/signals`, { headers: { Authorization: `Bearer ${apiToken}` } })
+      .then((response) => {
+        if (!response.ok) throw new Error("Could not load trends.");
+        return response.json() as Promise<{ items: SignalPoint[] }>;
+      })
+      .then(({ items }) => {
+        if (cancelled) return;
+        const grouped: Record<string, SignalPoint[]> = {};
+        for (const item of items) {
+          (grouped[item.signal_name] ??= []).push(item);
+        }
+        setSignals(grouped);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Could not load your trends right now.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const names = signals ? SIGNAL_ORDER.filter((name) => signals[name]?.length) : [];
+
   return (
     <section className="trends-page" aria-label="Trends">
       <header className="today-header trends-header">
         <h1>Trends</h1>
       </header>
+
+      {error ? <span className="recording-error" role="alert">{error}</span> : null}
+
+      {signals && names.length === 0 && !error ? (
+        <p className="trends-empty">No pulse data yet — complete a Morning Check-in to start your trends.</p>
+      ) : null}
+
+      <div className="trend-grid">
+        {names.map((name) => <TrendCard key={name} label={SIGNAL_LABELS[name] ?? name} points={signals![name]} />)}
+      </div>
+
+      <button type="button" className="wearables-bubble">
+        <PlusIcon width={13} height={13} />
+        <span>Shop wearables for more data</span>
+      </button>
     </section>
+  );
+}
+
+function TrendCard({ label, points }: { label: string; points: SignalPoint[] }) {
+  const ranks = points.map((point) => levelRank(point.level));
+  const latest = points[points.length - 1];
+  const direction = trendDirection(ranks);
+  const arrow = direction === "down" ? "↓" : direction === "up" ? "↑" : "→";
+  const directionWord = direction === "down" ? "declining" : direction === "up" ? "rising" : "steady";
+
+  return (
+    <article className="trend-card" aria-label={label}>
+      <header className="trend-card-head">
+        <div className="trend-card-title">
+          <strong>{label}</strong>
+          <small>{capitalizeLevel(latest.level)}</small>
+        </div>
+        <span className={`trend-direction trend-direction-${direction}`}>{arrow} {directionWord}</span>
+      </header>
+      <TrendChart points={points} ranks={ranks} />
+      <div className="trend-axis">
+        <span>{formatDay(points[0].recorded_at)}</span>
+        <span>{formatDay(points[points.length - 1].recorded_at)}</span>
+      </div>
+    </article>
+  );
+}
+
+const CHART_W = 280;
+const CHART_H = 108;
+const CHART_PAD_TOP = 10;
+const CHART_PAD_BOTTOM = 10;
+const CHART_PAD_LEFT = 58;
+const CHART_PAD_RIGHT = 8;
+const LEVEL_TOP_RANK = LEVEL_ORDER.length - 1;
+
+function TrendChart({ points, ranks }: { points: SignalPoint[]; ranks: number[] }) {
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+
+  function xAt(index: number) {
+    return CHART_PAD_LEFT + (index / Math.max(1, ranks.length - 1)) * (CHART_W - CHART_PAD_LEFT - CHART_PAD_RIGHT);
+  }
+  function yAt(rank: number) {
+    return CHART_PAD_TOP + ((LEVEL_TOP_RANK - rank) / LEVEL_TOP_RANK) * (CHART_H - CHART_PAD_TOP - CHART_PAD_BOTTOM);
+  }
+
+  const linePath = ranks.map((rank, index) => `${index === 0 ? "M" : "L"}${xAt(index).toFixed(1)},${yAt(rank).toFixed(1)}`).join(" ");
+  const baseY = CHART_H - CHART_PAD_BOTTOM;
+  const areaPath = `${linePath} L${xAt(ranks.length - 1).toFixed(1)},${baseY.toFixed(1)} L${xAt(0).toFixed(1)},${baseY.toFixed(1)} Z`;
+  const lastIndex = ranks.length - 1;
+
+  function updateHover(event: PointerEvent<SVGSVGElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const relativeX = ((event.clientX - rect.left) / rect.width) * CHART_W;
+    let nearest = 0;
+    let nearestDistance = Infinity;
+    ranks.forEach((_, index) => {
+      const distance = Math.abs(xAt(index) - relativeX);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = index;
+      }
+    });
+    setHoverIndex(nearest);
+  }
+
+  const activeIndex = hoverIndex ?? lastIndex;
+  const tooltipWidth = 76;
+  const tooltipX = Math.min(CHART_W - tooltipWidth - 2, Math.max(2, xAt(activeIndex) - tooltipWidth / 2));
+
+  return (
+    <svg
+      className="trend-chart"
+      viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+      role="img"
+      aria-label={`Trend line, ${ranks.length} readings, by level`}
+      onPointerMove={updateHover}
+      onPointerDown={updateHover}
+      onPointerLeave={() => setHoverIndex(null)}
+    >
+      {LEVEL_ORDER.map((level, rank) => (
+        <g key={level}>
+          <line className="trend-gridline" x1={CHART_PAD_LEFT} x2={CHART_W - CHART_PAD_RIGHT} y1={yAt(rank)} y2={yAt(rank)} />
+          <text className="trend-gridline-label" x={CHART_PAD_LEFT - 8} y={yAt(rank) + 3}>{capitalizeLevel(level)}</text>
+        </g>
+      ))}
+      <path className="trend-area" d={areaPath} />
+      <path className="trend-line" d={linePath} />
+      <circle className="trend-marker" cx={xAt(lastIndex)} cy={yAt(ranks[lastIndex])} r={4} />
+      {hoverIndex !== null ? (
+        <>
+          <line className="trend-crosshair" x1={xAt(hoverIndex)} x2={xAt(hoverIndex)} y1={CHART_PAD_TOP} y2={baseY} />
+          <circle className="trend-hover-marker" cx={xAt(hoverIndex)} cy={yAt(ranks[hoverIndex])} r={4} />
+          <g transform={`translate(${tooltipX}, 0)`}>
+            <rect className="trend-tooltip-bg" width={tooltipWidth} height={16} rx={5} />
+            <text className="trend-tooltip-text" x={tooltipWidth / 2} y={11}>
+              {formatDay(points[hoverIndex].recorded_at)} · {capitalizeLevel(points[hoverIndex].level)}
+            </text>
+          </g>
+        </>
+      ) : null}
+    </svg>
   );
 }

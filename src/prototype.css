@@ -24,9 +24,30 @@
 @keyframes checkinStepIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 .checkin-footer { width: 100%; max-width: 292px; margin-top: 11px; color: #9e8a78; text-align: center; }.checkin-footer p { max-width: none; margin: 0; color: inherit; font-size: 10px; font-weight: 500; letter-spacing: -.01em; line-height: 1.4; }.checkin-footer p + p { margin-top: 5px; }.checkin-footer span { margin: 0 !important; color: #e3ab67 !important; font-size: inherit !important; font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
 .microphone.is-paused { border-color: #e6bd88; background: rgba(126,73,29,.3); box-shadow: 0 0 0 9px rgba(187,98,20,.07), inset 0 0 18px rgba(226,139,45,.18); }
+.morning-checkin-overlay .checkin-transcript { justify-content: flex-start; padding: 35px 12px 6px; }.transcript-box { width: 100%; max-width: 292px; padding: 16px 17px; border: 1px solid rgba(220,157,77,.36); border-radius: 13px; background: #21140d; text-align: left; }.transcript-box p { max-width: none; margin: 0; color: #fff5eb; font-size: 14px; font-weight: 500; line-height: 1.55; white-space: pre-wrap; }
 .morning-checkin-overlay .checkin-saved { justify-content: center; gap: 20px; padding: 35px 12px 6px; }.saved-confirmation { color: #fff5eb !important; font-size: 24px !important; font-weight: 560 !important; letter-spacing: -.04em; }.saved-actions { display: grid; width: 100%; max-width: 292px; gap: 9px; }.saved-actions .save-audio,.saved-actions .stop-recording { width: 100%; min-height: 46px; border-radius: 12px; font-size: 13px; }.saved-actions .stop-recording { background: #21140d; color: #f3c884; }
 .signal-hero { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 15px; padding: 19px; border: 1px solid rgba(224,149,58,.34); border-radius: 18px; background: #21140d; }.signal-label,.insight-kicker { display: block; color: #d49a5f; font-size: 11px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }.signal-hero strong { display: block; margin: 6px 0 3px; font-size: 36px; font-weight: 540; letter-spacing: -.06em; }.signal-hero p { max-width: 180px; margin: 0; color: #bba592; font-size: 11px; line-height: 1.45; }.signal-mark { display: grid; width: 65px; height: 65px; flex: 0 0 65px; place-items: center; border: 1px solid rgba(247,180,92,.8); border-radius: 50%; color: #f1b55f; box-shadow: 0 0 23px rgba(223,131,40,.25); }
 .trend-insights { display: grid; gap: 10px; margin-top: 14px; }.insight { padding: 17px; border: 1px solid rgba(185,131,77,.25); border-radius: 16px; background: #17100c; }.insight.is-highlighted { border-color: rgba(232,164,76,.46); background: #21140d; }.insight h2 { margin: 8px 0 7px; color: #fff4e9; font-size: 19px; font-weight: 520; letter-spacing: -.035em; line-height: 1.14; }.insight p { margin: 0; color: #aa9380; font-size: 12px; line-height: 1.5; }.amber-dot { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: #efaa51; vertical-align: 1px; }.text-button { display: inline-flex; align-items: center; gap: 3px; margin-top: 14px; padding: 0; border: 0; background: transparent; color: #edab56; font-size: 12px; font-weight: 700; }
+.trends-empty { margin: 20px 0 0; color: #b8a18d; font-size: 13px; line-height: 1.5; }
+.trend-grid { display: grid; gap: 12px; margin-top: 16px; }
+.trend-card { padding: 15px 16px 12px; border: 1px solid rgba(185,131,77,.25); border-radius: 16px; background: #17100c; }
+.trend-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.trend-card-title { display: grid; gap: 3px; }
+.trend-card-title strong { color: #fff4e9; font-size: 14px; font-weight: 560; letter-spacing: -.02em; }
+.trend-card-title small { color: #9f8c7e; font-size: 11px; text-transform: capitalize; }
+.trend-direction { flex: 0 0 auto; color: #cbb8a7; font-size: 10px; font-weight: 650; letter-spacing: .01em; white-space: nowrap; }
+.trend-chart { display: block; width: 100%; height: 108px; margin-top: 8px; overflow: visible; touch-action: none; }
+.trend-gridline { stroke: rgba(204,155,100,.16); stroke-width: 1; }
+.trend-gridline-label { fill: #8a7562; font-size: 9px; font-weight: 600; text-anchor: end; text-transform: uppercase; letter-spacing: .02em; }
+.trend-area { fill: rgba(239,170,81,.14); stroke: none; }
+.trend-line { fill: none; stroke: #efaa51; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.trend-marker { fill: #efaa51; stroke: #17100c; stroke-width: 2; }
+.trend-crosshair { stroke: rgba(239,170,81,.4); stroke-width: 1; }
+.trend-hover-marker { fill: #fff5eb; stroke: #efaa51; stroke-width: 2; }
+.trend-tooltip-bg { fill: #2a1a10; stroke: rgba(239,170,81,.4); stroke-width: 1; }
+.trend-tooltip-text { fill: #fff5eb; font-size: 9px; font-weight: 650; text-anchor: middle; }
+.trend-axis { display: flex; justify-content: space-between; margin-top: 2px; color: #8a7562; font-size: 9px; }
+.wearables-bubble { display: flex; width: 100%; align-items: center; justify-content: center; gap: 6px; margin-top: 18px; padding: 12px 14px; border: 1px solid rgba(220,157,77,.36); border-radius: 999px; background: #21140d; color: #f3c884; font-size: 12px; font-weight: 650; }
 @media (max-height: 720px) { .screen-content { padding-top: 57px; }.today-header h1 { font-size: 32px; }.habit-row { min-height: 61px; } }
 .screen-content { display: flex; flex-direction: column; }
 .app-screen .mobile-scroll-content { min-height: 100%; }

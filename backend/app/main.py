@@ -16,7 +16,7 @@ from .amplifier import PulseClient
 from .auth import consume_stream_ticket, mint_stream_ticket, require_user
 from .config import settings
 from .database import Base, SessionLocal, engine
-from .models import AmplifierJob, CheckIn, Intervention, Recording, User, UserIntervention
+from .models import AmplifierJob, CheckIn, CheckInSignal, Intervention, Recording, User, UserIntervention
 from .streaming import apply_job_result, streams
 
 
@@ -201,6 +201,27 @@ def list_checkins(user_id: str = Depends(require_user)) -> dict[str, Any]:
     with SessionLocal() as db:
         records = list(db.scalars(select(CheckIn).where(CheckIn.user_id == user_id)))
         return {"items": [checkin_payload(record) for record in records]}
+
+
+@app.get("/v1/signals")
+def list_signals(user_id: str = Depends(require_user)) -> dict[str, Any]:
+    with SessionLocal() as db:
+        rows = list(db.scalars(select(CheckInSignal).where(
+            CheckInSignal.user_id == user_id,
+        ).order_by(CheckInSignal.recorded_at)))
+        return {"items": [{
+            "signal_name": row.signal_name,
+            "recorded_at": row.recorded_at,
+            "score": row.score,
+            "level": row.level,
+            "flagged": row.flagged,
+            "latest_score": row.latest_score,
+            "baseline_score": row.baseline_score,
+            "deviation_from_baseline": row.deviation_from_baseline,
+            "anomaly": row.anomaly,
+            "z_score": row.z_score,
+            "population_z": row.population_z,
+        } for row in rows]}
 
 
 @app.get("/v1/checkins/{checkin_id}/recording")
