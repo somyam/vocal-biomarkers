@@ -124,12 +124,16 @@ async def process_chunk(checkin_id: str, chunk: AudioChunk, stream: StreamSessio
     group_id = pulse_group_id(user_id)
     recorded_at_str = recorded_at.isoformat(timespec="seconds") + "Z"
     client = PulseClient()
-    if stream:
-        await stream.emit("analyzing", chunk=chunk.index)
+    # The real endpoint being called, group_id baked in -- shown verbatim in the
+    # "analyzing" event below rather than a generic placeholder, so "behind the
+    # scenes" shows the actual request, not a stylized description of one.
+    endpoint = f"/v2/models/pulse/groups/{group_id}/analyze/longitudinal"
     try:
         for attempt in range(client.s.pulse_max_attempts):
             submission = await client.submit(group_id, chunk.wav_bytes, recorded_at_str)
             job_id = str(submission.get("job_id") or submission.get("id") or uuid.uuid4())
+            if stream:
+                await stream.emit("analyzing", chunk=chunk.index, job_id=job_id, method="POST", path=endpoint)
             with SessionLocal() as db:
                 db.add(AmplifierJob(job_id=job_id, checkin_id=checkin_id, group_id=group_id,
                     recorded_at=recorded_at, status=str(submission.get("status", "queued")),
@@ -144,6 +148,10 @@ async def process_chunk(checkin_id: str, chunk: AudioChunk, stream: StreamSessio
                         db.commit()
                 continue
             await apply_job_result(job_id, result, stream)
+            if stream and str(result.get("status", "")).lower() == "done":
+                signals = (result.get("result") or {}).get("signals") or []
+                await stream.emit("job_result", chunk=chunk.index, job_id=job_id,
+                    signals=[{"name": s.get("name"), "level": s.get("level")} for s in signals])
             return
     except Exception as exc:
         job_id = f"local-failure-{uuid.uuid4()}"

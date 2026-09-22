@@ -45,6 +45,7 @@ export default function Prototype() {
   const [completed, setCompleted] = useState<Set<string>>(() => new Set());
   const [brainOpen, setBrainOpen] = useState(false);
   const [brainTranscript, setBrainTranscript] = useState<string | null>(null);
+  const [conversationTranscript, setConversationTranscript] = useState<string | null>(null);
   const [frequency, setFrequency] = useState<Frequency>("Daily");
   const [addHabitOpen, setAddHabitOpen] = useState(true);
 
@@ -85,13 +86,19 @@ export default function Prototype() {
 
       {tab === "today" && brainOpen ? (
         <MorningCheckInOverlay
-          onClose={() => setBrainOpen(false)}
+          onClose={() => {
+            setBrainOpen(false);
+            setConversationTranscript(null);
+          }}
           onComplete={completeBrainDump}
           onViewData={() => {
             setBrainOpen(false);
+            setConversationTranscript(null);
             setTab("trends");
           }}
           transcript={brainTranscript}
+          conversationTranscript={conversationTranscript}
+          onConversationReady={setConversationTranscript}
         />
       ) : null}
 
@@ -162,7 +169,7 @@ function TodayScreen({ completed, brainOpen, frequency, addHabitOpen, onToggle, 
   );
 }
 
-function MorningCheckInOverlay({ onClose, onComplete, onViewData, transcript }: { onClose: () => void; onComplete: (transcript: string | null) => void; onViewData: () => void; transcript: string | null }) {
+function MorningCheckInOverlay({ onClose, onComplete, onViewData, transcript, conversationTranscript, onConversationReady }: { onClose: () => void; onComplete: (transcript: string | null) => void; onViewData: () => void; transcript: string | null; conversationTranscript: string | null; onConversationReady: (transcript: string) => void }) {
   return (
     <section className="morning-checkin-overlay" aria-label="Morning Check-in">
       <header className="checkin-header">
@@ -170,17 +177,21 @@ function MorningCheckInOverlay({ onClose, onComplete, onViewData, transcript }: 
           <Cross1Icon width={22} height={22} />
         </button>
         <p className="eyebrow"><span>Morning Check-in</span></p>
-        {transcript === null ? (
+        {conversationTranscript !== null ? (
+          <h1>Your coach</h1>
+        ) : transcript === null ? (
           <>
-            <h1>How's your health?</h1>
+            <h1>1 Minute Brain Dump</h1>
             <p>Externalizing thoughts reduces stress and clears working memory. Your voice is analyzed for wellness indicators, not diagnoses.</p>
           </>
         ) : (
           <h1>Your reflection</h1>
         )}
       </header>
-      {transcript === null ? (
-        <BrainDumpRecorder onComplete={onComplete} onViewData={onViewData} minimumSeconds={30} />
+      {conversationTranscript !== null ? (
+        <ConversationScreen transcript={conversationTranscript} />
+      ) : transcript === null ? (
+        <BrainDumpRecorder onComplete={onComplete} onViewData={onViewData} onConversationReady={onConversationReady} minimumSeconds={30} />
       ) : (
         <CheckInTranscript transcript={transcript} />
       )}
@@ -198,16 +209,101 @@ function CheckInTranscript({ transcript }: { transcript: string }) {
   );
 }
 
-type ActivityStep = { id: number; text: string };
+type CoachMessage = { id: string; role: ConversationRole; text: string };
 
-function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onComplete: (transcript: string | null) => void; onViewData: () => void; minimumSeconds: number }) {
+function ConversationScreen({ transcript }: { transcript: string }) {
+  const reflection = transcript.trim() || "No transcript was captured for this check-in.";
+  const [messages, setMessages] = useState<CoachMessage[]>([{ id: "reflection", role: "user", text: reflection }]);
+  const [draft, setDraft] = useState("");
+  const [waiting, setWaiting] = useState(true);
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    publishLiveTrace("result", "Conversation started", "The saved transcript was sent to the prototype coach.");
+    publishConversationMessage("user", reflection);
+    const timer = window.setTimeout(() => {
+      const reply = initialCoachReply();
+      setMessages((current) => [...current, { id: "initial-coach", role: "agent", text: reply }]);
+      setWaiting(false);
+      publishConversationMessage("agent", reply);
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [reflection]);
+
+  function sendMessage() {
+    const text = draft.trim();
+    if (!text || waiting) return;
+    const userMessage = { id: `user-${Date.now()}`, role: "user" as const, text };
+    setMessages((current) => [...current, userMessage]);
+    setDraft("");
+    setWaiting(true);
+    publishConversationMessage("user", text);
+    window.setTimeout(() => {
+      const reply = "I’m here with you. Would you like to focus on a small habit, a clinic visit, or a plan for the week?";
+      setMessages((current) => [...current, { id: `agent-${Date.now()}`, role: "agent", text: reply }]);
+      setWaiting(false);
+      publishConversationMessage("agent", reply);
+    }, 650);
+  }
+
+  return (
+    <section className="conversation-screen" aria-label="Conversation with your coach">
+      <div className="conversation-messages">
+        {messages.map((message) => <p key={message.id} className={message.role === "agent" ? "coach-bubble" : "member-bubble"}>{message.text}</p>)}
+        {waiting ? <p className="coach-typing" aria-live="polite">Coach is thinking<span>···</span></p> : null}
+      </div>
+      <form className="coach-composer" onSubmit={(event) => { event.preventDefault(); sendMessage(); }}>
+        <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Reply to your coach…" aria-label="Reply to your coach" />
+        <button type="submit" disabled={!draft.trim() || waiting}>Send</button>
+      </form>
+    </section>
+  );
+}
+
+type StepPhase = "connect" | "score" | "transcribe" | "done" | "error";
+type SignalResult = { name: string; level: string };
+type ActivityStep = { id: number; text: string; phase: StepPhase; signals?: SignalResult[] };
+type TraceKind = "request" | "stream" | "audio" | "model" | "result" | "error";
+type ConversationRole = "user" | "agent";
+
+function publishLiveTrace(kind: TraceKind, title: string, detail: string, signals?: SignalResult[]) {
+  if (window.parent === window) return;
+  window.parent.postMessage({
+    source: "vocal-biomarkers-member-app",
+    kind,
+    title,
+    detail,
+    signals,
+    at: new Date().toISOString(),
+  }, window.location.origin);
+}
+
+function publishConversationMessage(role: ConversationRole, text: string) {
+  if (window.parent === window) return;
+  window.parent.postMessage({
+    source: "vocal-biomarkers-member-app",
+    type: "conversation",
+    role,
+    text,
+    at: new Date().toISOString(),
+  }, window.location.origin);
+}
+
+function initialCoachReply() {
+  return "Thanks for sharing that. It sounds like you have a lot on your plate. Would you like to choose one small support for the week?";
+}
+
+function BrainDumpRecorder({ onComplete, onViewData, onConversationReady, minimumSeconds }: { onComplete: (transcript: string | null) => void; onViewData: () => void; onConversationReady: (transcript: string) => void; minimumSeconds: number }) {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [savedTranscript, setSavedTranscript] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
-  const [steps, setSteps] = useState<ActivityStep[]>([]);
+  const [, setSteps] = useState<ActivityStep[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -218,6 +314,8 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
   const recordedMsRef = useRef(0);
   const stepIdRef = useRef(0);
   const finishedRef = useRef(false);
+  const sentAudioRef = useRef(false);
+  const continueConversationRef = useRef(false);
 
   const apiBase = (import.meta.env.VITE_VOCAL_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
   const apiToken = import.meta.env.VITE_VOCAL_API_TOKEN ?? "development-token";
@@ -246,8 +344,14 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
     return { "Content-Type": "application/json", Authorization: `Bearer ${apiToken}` };
   }
 
-  function addStep(text: string) {
-    setSteps((current) => [...current, { id: stepIdRef.current++, text }]);
+  function addStep(text: string, phase: StepPhase = "done", signals?: SignalResult[]) {
+    setSteps((current) => [...current, { id: stepIdRef.current++, text, phase, signals }]);
+    publishLiveTrace(
+      phase === "error" ? "error" : phase === "score" ? "model" : phase === "done" ? "result" : "stream",
+      phase === "connect" ? "WebSocket stream" : phase === "score" ? "Pulse analysis" : phase === "transcribe" ? "Transcript" : phase === "done" ? "Check-in complete" : "Check-in update",
+      text,
+      signals,
+    );
   }
 
   function truncate(text: string, max: number) {
@@ -266,18 +370,28 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
     if (!checkinId) {
       setProcessing(false);
       setError("Your recording could not be saved. Please try again.");
+      publishLiveTrace("error", "Finish check-in", "No check-in ID was available.");
       return;
     }
     try {
+      publishLiveTrace("request", "POST /v1/checkins/{id}/finish", "Finalizing the saved recording and derived results.");
       const finished = await fetch(`${apiBase}/v1/checkins/${checkinId}/finish`, { method: "POST", headers: headers() });
       if (!finished.ok) throw new Error("Could not save the recording.");
       const payload = await finished.json() as { transcript?: string | null };
+      publishLiveTrace("result", "Check-in saved", "The backend returned the completed check-in.");
       setProcessing(false);
       setSaved(true);
-      onComplete(payload.transcript ?? null);
+      const transcript = payload.transcript ?? null;
+      setSavedTranscript(transcript);
+      onComplete(transcript);
+      if (continueConversationRef.current) {
+        const reflection = transcript?.trim() || "No transcript was captured for this check-in.";
+        onConversationReady(reflection);
+      }
     } catch {
       setProcessing(false);
       setError("Your recording could not be saved. Please try again.");
+      publishLiveTrace("error", "Finish check-in failed", "The backend could not finalize this check-in.");
     }
   }
 
@@ -285,29 +399,48 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
     const streamUrl = new URL(`${apiBase}/v1/checkins/${checkinId}/stream`);
     streamUrl.protocol = streamUrl.protocol === "https:" ? "wss:" : "ws:";
     streamUrl.searchParams.set("ticket", ticket);
+    publishLiveTrace("stream", "WS /v1/checkins/{id}/stream", "Opening the authenticated live PCM stream.");
     const socket = new WebSocket(streamUrl);
     socket.binaryType = "arraybuffer";
     await new Promise<void>((resolve, reject) => {
-      socket.onopen = () => resolve();
-      socket.onerror = () => reject(new Error("Could not open the secure audio stream."));
+      socket.onopen = () => {
+        publishLiveTrace("stream", "WebSocket connected", "The server is ready to receive 16 kHz PCM audio.");
+        resolve();
+      };
+      socket.onerror = () => {
+        publishLiveTrace("error", "WebSocket connection failed", "The secure audio stream could not be opened.");
+        reject(new Error("Could not open the secure audio stream."));
+      };
     });
     socket.onmessage = (event) => {
-      const message = JSON.parse(event.data) as { type?: string; message?: string; text?: string; code?: string };
+      const message = JSON.parse(event.data) as {
+        type?: string; message?: string; text?: string; code?: string; chunk?: number;
+        job_id?: string; method?: string; path?: string; signals?: { name: string; level: string }[];
+      };
       switch (message.type) {
+        case "connected":
+          addStep("Connected — ready to listen.", "connect");
+          break;
         case "processing":
-          addStep("Analyzing your check-in…");
+          addStep("Analyzing your check-in…", "score");
           break;
         case "analyzing":
-          addStep("Scoring your voice…");
+          // One of these fires roughly every 15s of real speech, live, while you're
+          // still talking -- the overlapping-window scoring, not a single end-of-call read.
+          // The actual request, not a description of one.
+          addStep(`chunk ${message.chunk} → ${message.method} ${message.path} → job ${message.job_id}`, "score");
+          break;
+        case "job_result":
+          addStep(`chunk ${message.chunk} → job ${message.job_id} returned:`, "score", message.signals);
           break;
         case "transcribing":
-          addStep("Transcribing what you said…");
+          addStep("Transcribing what you said…", "transcribe");
           break;
         case "transcript":
-          addStep(message.text ? `Heard: “${truncate(message.text, 70)}”` : "Transcript ready.");
+          addStep(message.text ? `Heard: “${truncate(message.text, 70)}”` : "Transcript ready.", "transcribe");
           break;
         case "result":
-          addStep("Saved to your trends.");
+          addStep("Saved to your trends.", "done");
           void finishRecording();
           break;
         case "error":
@@ -317,10 +450,10 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
           // non-fatal too -- the backend still finishes and will send "result". Anything
           // else (e.g. invalid_pcm_frame, mid-recording) is a real, blocking problem.
           if (message.code === "processing_timeout") {
-            addStep("Taking longer than expected — finishing in the background.");
+            addStep("Taking longer than expected — finishing in the background.", "error");
             void finishRecording();
           } else if (message.code === "pulse_processing_failed" || message.code === "transcription_failed") {
-            addStep(message.message ?? "One step had an issue, but your check-in is still being saved.");
+            addStep(message.message ?? "One step had an issue, but your check-in is still being saved.", "error");
           } else {
             setError(message.message ?? "Audio processing is unavailable right now.");
           }
@@ -348,6 +481,10 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
   async function startRecording() {
     setError(null);
     setSaved(false);
+    setSavedTranscript(null);
+    setSteps([]);
+    sentAudioRef.current = false;
+    continueConversationRef.current = false;
 
     if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) {
       setError("Live audio recording is not available in this browser.");
@@ -355,6 +492,7 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
     }
 
     try {
+      publishLiveTrace("request", "POST /v1/checkins", "Creating a new Morning Check-in and one-use stream ticket.");
       const created = await fetch(`${apiBase}/v1/checkins`, {
         method: "POST",
         headers: headers(),
@@ -362,6 +500,7 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
       });
       if (!created.ok) throw new Error("Could not create a Morning Check-in.");
       const { checkin, stream_ticket: ticket } = await created.json() as { checkin: { checkin_id: string }; stream_ticket: string };
+      publishLiveTrace("result", "Check-in created", `Check-in ${checkin.checkin_id.slice(0, 8)}… is ready to stream.`);
       const socket = await openStream(checkin.checkin_id, ticket);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -370,7 +509,13 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
       const source = context.createMediaStreamSource(stream);
       const processor = new AudioWorkletNode(context, "pcm-processor", { processorOptions: { targetRate: 16000 } });
       processor.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-        if (socket.readyState === WebSocket.OPEN) socket.send(event.data);
+        if (socket.readyState === WebSocket.OPEN) {
+          if (!sentAudioRef.current) {
+            sentAudioRef.current = true;
+            publishLiveTrace("audio", "PCM audio streaming", "16 kHz mono audio frames are now being sent over the live stream.");
+          }
+          socket.send(event.data);
+        }
       };
       source.connect(processor);
       processor.connect(context.destination);
@@ -386,6 +531,7 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
       stopCapture();
       socketRef.current?.close();
       setError("Microphone access and the private check-in service are needed to record.");
+      publishLiveTrace("error", "Recording could not start", "Microphone access or the private check-in API was unavailable.");
     }
   }
 
@@ -396,6 +542,7 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
     setElapsed(Math.floor(recordedMsRef.current / 1000));
     void context.suspend();
     socketRef.current?.send(JSON.stringify({ type: "checkin.pause" }));
+    publishLiveTrace("stream", "checkin.pause", "Audio capture has been paused.");
     setRecording(false);
     setPaused(true);
   }
@@ -406,17 +553,28 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
     startedAtRef.current = Date.now();
     void context.resume();
     socketRef.current?.send(JSON.stringify({ type: "checkin.resume" }));
+    publishLiveTrace("stream", "checkin.resume", "Audio capture has resumed.");
     setPaused(false);
     setRecording(true);
   }
 
-  function savePausedRecording() {
-    if (!paused || elapsed < minimumSeconds || !checkinIdRef.current) return;
+  function saveRecording(startConversation = false) {
+    if ((!recording && !paused) || elapsed < minimumSeconds || !checkinIdRef.current) return;
+    continueConversationRef.current = startConversation;
+    if (recording) {
+      recordedMsRef.current += Date.now() - startedAtRef.current;
+      setElapsed(Math.floor(recordedMsRef.current / 1000));
+      void audioContextRef.current?.suspend();
+    }
     finishedRef.current = false;
-    setSteps([]);
+    // Not clearing `steps` here -- the log now spans the whole session (connect
+    // through result), not just the processing phase, so what already happened
+    // during recording (e.g. live "analyzing" windows) stays visible.
     setProcessing(true);
+    setRecording(false);
     setPaused(false);
     socketRef.current?.send(JSON.stringify({ type: "checkin.end" }));
+    publishLiveTrace("stream", "checkin.end", "Audio capture ended; waiting for processing and transcription.");
     stopCapture();
     // The backend now keeps this socket open until the check-in's Amplifier scoring and
     // transcription both actually finish -- real API calls, so this can take real
@@ -436,12 +594,8 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
   if (processing) {
     return (
       <section className="brain-dump checkin-processing" aria-label="Saving your Morning Check-in">
-        <div className="checkin-activity" aria-live="polite">
-          <p className="checkin-activity-hd">Saving your check-in…</p>
-          <ul className="checkin-activity-log">
-            {steps.map((step) => <li key={step.id}>{step.text}</li>)}
-          </ul>
-        </div>
+        <p className="checkin-activity-hd">{continueConversationRef.current ? "Starting conversation…" : "Saving your check-in…"}</p>
+        <p className="checkin-activity-current" aria-live="polite">{continueConversationRef.current ? "Your coach will receive your reflection as soon as the transcript is ready." : "Your reflection is being saved and prepared for your Trends."}</p>
         {error ? <span className="recording-error" role="alert">{error}</span> : null}
       </section>
     );
@@ -453,7 +607,7 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
         <p className="saved-confirmation" role="status" aria-live="polite">saved.</p>
         <div className="saved-actions" aria-label="Next steps">
           <button type="button" className="save-audio" onClick={onViewData}>View Data</button>
-          <button type="button" className="stop-recording">Continue conversation in chat</button>
+          <button type="button" className="stop-recording" onClick={() => onConversationReady(savedTranscript?.trim() || "No transcript was captured for this check-in.")}>Continue conversation in chat</button>
         </div>
       </section>
     );
@@ -475,9 +629,9 @@ function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onCompl
       </footer>
       {error ? <span className="recording-error" role="alert">{error}</span> : null}
       <div className="recorder-actions">
-        {paused ? <>
-          <button type="button" className="stop-recording" onClick={resumeRecording}>Resume</button>
-          <button type="button" className="save-audio" onClick={savePausedRecording} disabled={elapsed < minimumSeconds || saved}>Save</button>
+        {elapsed >= minimumSeconds && (recording || paused) ? <>
+          <button type="button" className="save-audio" onClick={() => saveRecording()} disabled={saved}>Save</button>
+          <button type="button" className="stop-recording" onClick={() => saveRecording(true)}>Continue Conversation</button>
         </> : null}
       </div>
     </section>
