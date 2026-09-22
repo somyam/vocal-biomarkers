@@ -10,6 +10,13 @@ from .config import settings
 TERMINAL = {"done", "failed", "timed-out"}
 
 
+def pulse_group_id(user_id: str) -> str:
+    """A longitudinal group represents exactly one subject — Amplifier's own rule, not
+    ours. Derive the group id from the user id rather than storing it, so nothing can
+    accidentally register two members' recordings into the same group."""
+    return f"user-{user_id}"
+
+
 class PulseClient:
     def __init__(self):
         self.s = settings()
@@ -19,13 +26,24 @@ class PulseClient:
     def enabled(self) -> bool:
         return bool(self.s.amplifier_account_id and self.s.amplifier_api_key)
 
-    async def submit(self, wav_bytes: bytes) -> dict:
+    async def submit(self, group_id: str, wav_bytes: bytes, recorded_at: str) -> dict:
+        """Submit into `group_id`'s longitudinal history rather than scoring the recording
+        on its own — `POST /v2/models/pulse/groups/{group_id}/analyze/longitudinal`. The
+        completed result's `result.signals[]` carries `baseline_score`,
+        `deviation_from_baseline`, `anomaly`, `z_score`, and `population_z` once the
+        subject's group has enough spaced readings; they are `null` before that.
+        `group_id` must be per-subject (see `pulse_group_id`). `recorded_at` (ISO 8601)
+        orders this reading within that subject's history."""
         if not self.enabled:
             return {"job_id": f"mock-{secrets.token_hex(12)}", "status": "done", "result": {"summary": {"recommended_action": "inconclusive"}, "signals": [], "audio_quality": {"issues": []}, "extended_metrics": {}}}
         async with httpx.AsyncClient(timeout=60) as client:
             upload = (await client.post(f"{self.s.amplifier_base_url}/v2/audio/uploads", headers=self.headers, json={"content_type": "audio/wav"})).raise_for_status().json()
             (await client.put(upload["upload_url"], content=wav_bytes, headers=upload.get("required_headers", {}))).raise_for_status()
-            response = await client.post(f"{self.s.amplifier_base_url}/v2/models/pulse/analyze", headers=self.headers, data={"audio_upload_ref": upload["upload_ref"], "diarize": "false"})
+            response = await client.post(
+                f"{self.s.amplifier_base_url}/v2/models/pulse/groups/{group_id}/analyze/longitudinal",
+                headers=self.headers,
+                data={"audio_upload_ref": upload["upload_ref"], "diarize": "false", "recorded_at": recorded_at},
+            )
             return response.raise_for_status().json()
 
     async def wait_for_result(self, job_id: str) -> dict:

@@ -71,8 +71,9 @@ class UserInterventionUpdate(BaseModel):
 
 def checkin_payload(checkin: CheckIn) -> dict[str, Any]:
     return {"checkin_id": checkin.checkin_id, "user_id": checkin.user_id,
-        "completed_at": checkin.completed_at, "duration_seconds": checkin.duration_seconds,
-        "pulse_json": checkin.pulse_json}
+        "started_at": checkin.started_at, "completed_at": checkin.completed_at,
+        "duration_seconds": checkin.duration_seconds, "pulse_json": checkin.pulse_json,
+        "transcript": checkin.transcript}
 
 
 def require_owned_checkin(checkin_id: str, user_id: str) -> CheckIn:

@@ -85,6 +85,10 @@ export default function Prototype() {
         <MorningCheckInOverlay
           onClose={() => setBrainOpen(false)}
           onComplete={completeBrainDump}
+          onViewData={() => {
+            setBrainOpen(false);
+            setTab("trends");
+          }}
         />
       ) : null}
 
@@ -155,7 +159,7 @@ function TodayScreen({ completed, brainOpen, frequency, addHabitOpen, onToggle, 
   );
 }
 
-function MorningCheckInOverlay({ onClose, onComplete }: { onClose: () => void; onComplete: () => void }) {
+function MorningCheckInOverlay({ onClose, onComplete, onViewData }: { onClose: () => void; onComplete: () => void; onViewData: () => void }) {
   return (
     <section className="morning-checkin-overlay" aria-label="Morning Check-in">
       <header className="checkin-header">
@@ -163,20 +167,24 @@ function MorningCheckInOverlay({ onClose, onComplete }: { onClose: () => void; o
           <Cross1Icon width={22} height={22} />
         </button>
         <p className="eyebrow"><span>Morning Check-in</span></p>
-        <h1>What’s on your mind?</h1>
-        <p>Externalizing thoughts reduces stress and clears working memory.</p>
+        <h1>How's your health?</h1>
+        <p>Externalizing thoughts reduces stress and clears working memory. Your voice is analyzed for wellness indicators, not diagnoses.</p>
       </header>
-      <BrainDumpRecorder onComplete={onComplete} minimumSeconds={60} />
+      <BrainDumpRecorder onComplete={onComplete} onViewData={onViewData} minimumSeconds={30} />
     </section>
   );
 }
 
-function BrainDumpRecorder({ onComplete, minimumSeconds }: { onComplete: () => void; minimumSeconds: number }) {
+type ActivityStep = { id: number; text: string };
+
+function BrainDumpRecorder({ onComplete, onViewData, minimumSeconds }: { onComplete: () => void; onViewData: () => void; minimumSeconds: number }) {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [processing, setProcessing] = useState(false);
+  const [steps, setSteps] = useState<ActivityStep[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -185,6 +193,8 @@ function BrainDumpRecorder({ onComplete, minimumSeconds }: { onComplete: () => v
   const checkinIdRef = useRef<string | null>(null);
   const startedAtRef = useRef<number>(0);
   const recordedMsRef = useRef(0);
+  const stepIdRef = useRef(0);
+  const finishedRef = useRef(false);
 
   const apiBase = (import.meta.env.VITE_VOCAL_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
   const apiToken = import.meta.env.VITE_VOCAL_API_TOKEN ?? "development-token";
@@ -213,6 +223,40 @@ function BrainDumpRecorder({ onComplete, minimumSeconds }: { onComplete: () => v
     return { "Content-Type": "application/json", Authorization: `Bearer ${apiToken}` };
   }
 
+  function addStep(text: string) {
+    setSteps((current) => [...current, { id: stepIdRef.current++, text }]);
+  }
+
+  function truncate(text: string, max: number) {
+    return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  }
+
+  // Called once the backend reports a terminal outcome for this check-in ("result", or a
+  // processing_timeout it gave up waiting on) -- or by the safety-net timeout below if
+  // neither message ever arrives. Closes the socket and fetches the saved check-in.
+  async function finishRecording() {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    socketRef.current?.close();
+    socketRef.current = null;
+    const checkinId = checkinIdRef.current;
+    if (!checkinId) {
+      setProcessing(false);
+      setError("Your recording could not be saved. Please try again.");
+      return;
+    }
+    try {
+      const finished = await fetch(`${apiBase}/v1/checkins/${checkinId}/finish`, { method: "POST", headers: headers() });
+      if (!finished.ok) throw new Error("Could not save the recording.");
+      setProcessing(false);
+      setSaved(true);
+      onComplete();
+    } catch {
+      setProcessing(false);
+      setError("Your recording could not be saved. Please try again.");
+    }
+  }
+
   async function openStream(checkinId: string, ticket: string) {
     const streamUrl = new URL(`${apiBase}/v1/checkins/${checkinId}/stream`);
     streamUrl.protocol = streamUrl.protocol === "https:" ? "wss:" : "ws:";
@@ -224,8 +268,42 @@ function BrainDumpRecorder({ onComplete, minimumSeconds }: { onComplete: () => v
       socket.onerror = () => reject(new Error("Could not open the secure audio stream."));
     });
     socket.onmessage = (event) => {
-      const message = JSON.parse(event.data) as { type?: string; message?: string };
-      if (message.type === "error") setError(message.message ?? "Audio processing is unavailable right now.");
+      const message = JSON.parse(event.data) as { type?: string; message?: string; text?: string; code?: string };
+      switch (message.type) {
+        case "processing":
+          addStep("Analyzing your check-in…");
+          break;
+        case "analyzing":
+          addStep("Scoring your voice…");
+          break;
+        case "transcribing":
+          addStep("Transcribing what you said…");
+          break;
+        case "transcript":
+          addStep(message.text ? `Heard: “${truncate(message.text, 70)}”` : "Transcript ready.");
+          break;
+        case "result":
+          addStep("Saved to your trends.");
+          void finishRecording();
+          break;
+        case "error":
+          // processing_timeout is terminal but not fatal: the backend gave up waiting on
+          // this connection, not on the check-in itself, which keeps completing in the
+          // background. pulse_processing_failed/transcription_failed are per-step and
+          // non-fatal too -- the backend still finishes and will send "result". Anything
+          // else (e.g. invalid_pcm_frame, mid-recording) is a real, blocking problem.
+          if (message.code === "processing_timeout") {
+            addStep("Taking longer than expected — finishing in the background.");
+            void finishRecording();
+          } else if (message.code === "pulse_processing_failed" || message.code === "transcription_failed") {
+            addStep(message.message ?? "One step had an issue, but your check-in is still being saved.");
+          } else {
+            setError(message.message ?? "Audio processing is unavailable right now.");
+          }
+          break;
+        default:
+          break;
+      }
     };
     socketRef.current = socket;
     socket.send(JSON.stringify({ type: "checkin.start", sample_rate: 16000, encoding: "pcm_s16le" }));
@@ -259,8 +337,8 @@ function BrainDumpRecorder({ onComplete, minimumSeconds }: { onComplete: () => v
         body: JSON.stringify({ source: "morning-check-in" }),
       });
       if (!created.ok) throw new Error("Could not create a Morning Check-in.");
-      const { checkin, stream_ticket: ticket } = await created.json() as { checkin: { id: string }; stream_ticket: string };
-      const socket = await openStream(checkin.id, ticket);
+      const { checkin, stream_ticket: ticket } = await created.json() as { checkin: { checkin_id: string }; stream_ticket: string };
+      const socket = await openStream(checkin.checkin_id, ticket);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       const context = new AudioContext();
@@ -275,7 +353,7 @@ function BrainDumpRecorder({ onComplete, minimumSeconds }: { onComplete: () => v
       audioContextRef.current = context;
       sourceRef.current = source;
       processorRef.current = processor;
-      checkinIdRef.current = checkin.id;
+      checkinIdRef.current = checkin.checkin_id;
       startedAtRef.current = Date.now();
       recordedMsRef.current = 0;
       setElapsed(0);
@@ -308,26 +386,54 @@ function BrainDumpRecorder({ onComplete, minimumSeconds }: { onComplete: () => v
     setRecording(true);
   }
 
-  async function savePausedRecording() {
+  function savePausedRecording() {
     if (!paused || elapsed < minimumSeconds || !checkinIdRef.current) return;
-    const checkinId = checkinIdRef.current;
-    socketRef.current?.send(JSON.stringify({ type: "checkin.end" }));
-    await new Promise((resolve) => window.setTimeout(resolve, 250));
-    socketRef.current?.close();
-    socketRef.current = null;
-    stopCapture();
+    finishedRef.current = false;
+    setSteps([]);
+    setProcessing(true);
     setPaused(false);
-    try {
-      const finished = await fetch(`${apiBase}/v1/checkins/${checkinId}/finish`, { method: "POST", headers: headers() });
-      if (!finished.ok) throw new Error("Could not save the recording.");
-      setSaved(true);
-      onComplete();
-    } catch {
-      setError("Your recording could not be saved. Please try again.");
-    }
+    socketRef.current?.send(JSON.stringify({ type: "checkin.end" }));
+    stopCapture();
+    // The backend now keeps this socket open until the check-in's Amplifier scoring and
+    // transcription both actually finish -- real API calls, so this can take real
+    // seconds, not the fixed 250ms this used to wait before force-closing and calling
+    // /finish regardless of whether anything had actually completed. onmessage above
+    // drives finishRecording() once a terminal event arrives; this is only the backstop
+    // in case that message itself never does (e.g. a dropped connection).
+    window.setTimeout(() => {
+      if (finishedRef.current) return;
+      addStep("Still working on it — check back shortly.");
+      void finishRecording();
+    }, 130_000);
   }
 
   const formattedTime = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+
+  if (processing) {
+    return (
+      <section className="brain-dump checkin-processing" aria-label="Saving your Morning Check-in">
+        <div className="checkin-activity" aria-live="polite">
+          <p className="checkin-activity-hd">Saving your check-in…</p>
+          <ul className="checkin-activity-log">
+            {steps.map((step) => <li key={step.id}>{step.text}</li>)}
+          </ul>
+        </div>
+        {error ? <span className="recording-error" role="alert">{error}</span> : null}
+      </section>
+    );
+  }
+
+  if (saved) {
+    return (
+      <section className="brain-dump checkin-saved" aria-label="Morning Check-in saved">
+        <p className="saved-confirmation" role="status" aria-live="polite">saved.</p>
+        <div className="saved-actions" aria-label="Next steps">
+          <button type="button" className="save-audio" onClick={onViewData}>View Data</button>
+          <button type="button" className="stop-recording">Continue conversation in chat</button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="brain-dump" aria-label="Morning Check-in voice reflection">
@@ -337,12 +443,11 @@ function BrainDumpRecorder({ onComplete, minimumSeconds }: { onComplete: () => v
       {recording || paused ? <strong className="recording-timer" aria-live="polite">{formattedTime}</strong> : null}
       <div className="checkin-checklist" aria-label="Morning Check-in guidance">
         <div><span className="checkin-checkmark"><CheckIcon width={14} height={14} /></span><span>Find a quiet space.</span></div>
-        <div><span className="checkin-checkmark"><CheckIcon width={14} height={14} /></span><span>Talk for at least 1 minute.</span></div>
+        <div><span className="checkin-checkmark"><CheckIcon width={14} height={14} /></span><span>Talk for at least 30 seconds.</span></div>
         <div><span className="checkin-checkmark"><CheckIcon width={14} height={14} /></span><span>Tap the mic when you are ready.</span></div>
       </div>
       <footer className="checkin-footer">
         <p>Reminder set for 8:00 am · <span>Change</span></p>
-        <p>Your voice is analyzed for wellness indicators, not diagnoses. <span>How recordings are stored</span></p>
       </footer>
       {error ? <span className="recording-error" role="alert">{error}</span> : null}
       <div className="recorder-actions">

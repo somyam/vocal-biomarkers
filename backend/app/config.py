@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     stream_ticket_ttl_seconds: int = 120
     pulse_poll_seconds: float = 3.0
     pulse_max_attempts: int = 2
+    # Upper bound on how long a check-in's WebSocket stays open waiting for its queued
+    # chunks' real Amplifier round trips before giving up and emitting a timeout error.
+    finalize_timeout_seconds: float = 120.0
+    whisper_model: str = "base"
+    mock_whisper: bool = False
 
 
 @lru_cache
