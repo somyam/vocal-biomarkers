@@ -3,7 +3,9 @@ services:
     build: .
     env_file: .env
     ports: ["8000:8000"]
-    depends_on: [db]
+    depends_on:
+      db:
+        condition: service_healthy
   db:
     image: postgres:16-alpine
     environment:
@@ -12,5 +14,10 @@ services:
       POSTGRES_PASSWORD: vocal
     ports: ["5432:5432"]
     volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vocal -d vocal_biomarkers"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
 volumes:
   postgres-data:
