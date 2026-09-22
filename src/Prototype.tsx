@@ -178,7 +178,7 @@ function MorningCheckInOverlay({ onClose, onComplete, onViewData, transcript, co
         </button>
         <p className="eyebrow"><span>Morning Check-in</span></p>
         {conversationTranscript !== null ? (
-          <h1>Your coach</h1>
+          <h1>Coach</h1>
         ) : transcript === null ? (
           <>
             <h1>1 Minute Brain Dump</h1>
