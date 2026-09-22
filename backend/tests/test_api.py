@@ -12,14 +12,25 @@ def test_checkin_creation_requires_bearer_token():
         response = client.post("/v1/checkins", json={}, headers=HEADERS)
         assert response.status_code == 201
         payload = response.json()
-        assert payload["checkin"]["status"] == "created"
+        assert payload["checkin"]["checkin_id"]
         assert payload["stream_ticket"]
+
+
+def test_seeded_user_interventions_can_be_read_and_stopped():
+    with TestClient(app) as client:
+        items = client.get("/v1/user-interventions", headers=HEADERS).json()["items"]
+        assert items
+        assert "guide_text" in items[0]
+        stopped = client.patch(f"/v1/user-interventions/{items[0]['user_intervention_id']}",
+            headers=HEADERS, json={"active": False})
+        assert stopped.status_code == 200
+        assert stopped.json()["active"] is False
 
 
 def test_stream_ticket_is_accepted_once_and_pcm_windows_are_persisted():
     with TestClient(app) as client:
         created = client.post("/v1/checkins", json={}, headers=HEADERS).json()
-        checkin_id = created["checkin"]["id"]
+        checkin_id = created["checkin"]["checkin_id"]
         path = created["stream_path"]
         with client.websocket_connect(path) as socket:
             assert socket.receive_json()["type"] == "connected"
