@@ -11,8 +11,6 @@ import {
   HeartIcon,
   LightningBoltIcon,
   MixerHorizontalIcon,
-  PauseIcon,
-  PlayIcon,
   PlusIcon,
   SunIcon,
 } from "@radix-ui/react-icons";
@@ -66,21 +64,17 @@ export default function Prototype() {
   return (
     <div className="longevity-app" data-testid="longevity-app">
       <MobileScroll className="app-screen">
-        <main className="screen-content" aria-label={tab === "today" ? "Today" : "Trends"}>
-          {tab === "today" ? (
-            <TodayScreen
-              completed={completed}
-              brainOpen={brainOpen}
-              frequency={frequency}
-              addHabitOpen={addHabitOpen}
-              onToggle={toggleHabit}
-              onBrainToggle={() => setBrainOpen((value) => !value)}
-              onFrequency={setFrequency}
-              onAddHabit={() => setAddHabitOpen((value) => !value)}
-            />
-          ) : (
-            <TrendsScreen />
-          )}
+        <main className="screen-content" aria-label="Today">
+          <TodayScreen
+            completed={completed}
+            brainOpen={brainOpen}
+            frequency={frequency}
+            addHabitOpen={addHabitOpen}
+            onToggle={toggleHabit}
+            onBrainToggle={() => setBrainOpen((value) => !value)}
+            onFrequency={setFrequency}
+            onAddHabit={() => setAddHabitOpen((value) => !value)}
+          />
         </main>
       </MobileScroll>
 
@@ -94,7 +88,6 @@ export default function Prototype() {
           onViewData={() => {
             setBrainOpen(false);
             setConversationTranscript(null);
-            setTab("trends");
           }}
           transcript={brainTranscript}
           conversationTranscript={conversationTranscript}
@@ -106,10 +99,6 @@ export default function Prototype() {
         <button type="button" className={tab === "today" ? "nav-item is-active" : "nav-item"} onClick={() => setTab("today")} aria-current={tab === "today" ? "page" : undefined}>
           <SunIcon width={24} height={24} />
           <span>Today</span>
-        </button>
-        <button type="button" className={tab === "trends" ? "nav-item is-active" : "nav-item"} onClick={() => setTab("trends")} aria-current={tab === "trends" ? "page" : undefined}>
-          <BarChartIcon width={24} height={24} />
-          <span>Trends</span>
         </button>
       </nav>
     </div>
@@ -191,7 +180,7 @@ function MorningCheckInOverlay({ onClose, onComplete, onViewData, transcript, co
       {conversationTranscript !== null ? (
         <ConversationScreen transcript={conversationTranscript} />
       ) : transcript === null ? (
-        <BrainDumpRecorder onComplete={onComplete} onViewData={onViewData} onConversationReady={onConversationReady} minimumSeconds={30} />
+        <BrainDumpRecorder onComplete={onComplete} onViewData={onViewData} />
       ) : (
         <CheckInTranscript transcript={transcript} />
       )}
@@ -262,9 +251,7 @@ function ConversationScreen({ transcript }: { transcript: string }) {
   );
 }
 
-type StepPhase = "connect" | "score" | "transcribe" | "done" | "error";
 type SignalResult = { name: string; level: string };
-type ActivityStep = { id: number; text: string; phase: StepPhase; signals?: SignalResult[] };
 type TraceKind = "request" | "stream" | "audio" | "model" | "result" | "error";
 type ConversationRole = "user" | "agent";
 
@@ -295,319 +282,223 @@ function initialCoachReply() {
   return "Thanks for sharing that. It sounds like you have a lot on your plate. Would you like to choose one small support for the week?";
 }
 
-function BrainDumpRecorder({ onComplete, onViewData, onConversationReady, minimumSeconds }: { onComplete: (transcript: string | null) => void; onViewData: () => void; onConversationReady: (transcript: string) => void; minimumSeconds: number }) {
-  const [recording, setRecording] = useState(false);
-  const [paused, setPaused] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-  const [savedTranscript, setSavedTranscript] = useState<string | null>(null);
-  const [processing, setProcessing] = useState(false);
-  const [, setSteps] = useState<ActivityStep[]>([]);
-  const streamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const processorRef = useRef<AudioWorkletNode | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
-  const checkinIdRef = useRef<string | null>(null);
-  const startedAtRef = useRef<number>(0);
-  const recordedMsRef = useRef(0);
-  const stepIdRef = useRef(0);
-  const finishedRef = useRef(false);
-  const sentAudioRef = useRef(false);
-  const continueConversationRef = useRef(false);
+type DemoEvent =
+  | { kind: "agent"; text: string }
+  | { kind: "user_audio"; audio: string; text: string }
+  | { kind: "pulse_call"; chunk: number; window: string; jobId: string; signals: SignalResult[] }
+  | { kind: "reasoning"; lines: string[] }
+  | { kind: "tool"; call: string }
+  | { kind: "saved" };
 
-  const apiBase = (import.meta.env.VITE_VOCAL_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
-  const apiToken = import.meta.env.VITE_VOCAL_API_TOKEN ?? "development-token";
+const PULSE_GROUP_ID = "user-1024";
+const PULSE_ENDPOINT = `/v2/models/pulse/groups/${PULSE_GROUP_ID}/analyze/longitudinal`;
 
-  useEffect(() => {
-    if (!recording) return;
+// Every line here is exactly what public/demo/user-*.wav actually says -- generated from
+// this same text -- so what's shown on screen and what's playing never drift apart.
+const DEMO_SCRIPT: DemoEvent[] = [
+  { kind: "agent", text: "How are you feeling today?" },
+  { kind: "user_audio", audio: "/demo/user-1.wav", text: "I'm having a good morning, but I have a lot of work coming up this week. My boss is out of office so I have been taking on a lot more work. My kids are on summer session so I have to shuttle them around to their activities and watch them during the days. I tripped over some toys yesterday and got really angry which I feel bad about. I have been listening to some good health podcasts, but not sure what is actually useful because there is so much information. I've been sticking to a good morning routine, but I haven't been able to make it to the gym because my back is hurting and I've been ordering in food all week." },
+  // Mirrors the real overlapping-window bucketer: a partial read at the first hop (0-15s),
+  // then a fuller, more confident read once the whole clip has landed (0-30s).
+  { kind: "pulse_call", chunk: 0, window: "0:00–0:15", jobId: "pulse-4f2a1c9e", signals: [
+    { name: "anxiety", level: "consider" },
+    { name: "stress", level: "consider" },
+  ] },
+  { kind: "pulse_call", chunk: 1, window: "0:00–0:30", jobId: "pulse-9b7d3e12", signals: [
+    { name: "anxiety", level: "moderate" },
+    { name: "stress", level: "moderate" },
+    { name: "elevated-blood-pressure", level: "consider" },
+    { name: "dehydration", level: "low" },
+    { name: "fatigue", level: "low" },
+  ] },
+  { kind: "saved" },
+  { kind: "reasoning", lines: [
+    "Parsing the check-in transcript for stress, workload, and mood language.",
+    "GET /v2/groups/user-1024/longitudinal — pulling Maya's trajectory before responding.",
+    "Anxiety and stress are reading elevated against her personal baseline this morning.",
+    "Elevated-blood-pressure is up slightly against baseline — a small deviation, not a flag on its own.",
+    "Dehydration and fatigue are both trending down compared to recent check-ins — genuine improvement, not noise.",
+  ] },
+  { kind: "agent", text: "Sorry about all the work and the back pain! I can hear that you are a bit more stressed than your usual, which fits what you are describing. Have you tried an at-home meditation? I can add one to your profile." },
+  { kind: "user_audio", audio: "/demo/user-2.wav", text: "Sure." },
+  { kind: "tool", call: "add-protocol { name: \"at-home meditation\", frequency: \"daily\", reason: \"anxiety and stress elevated vs. baseline\" }" },
+  { kind: "agent", text: "Yes, and how have you been enjoying the new supplements you are taking?" },
+  { kind: "user_audio", audio: "/demo/user-3.wav", text: "I've only been on them for a week so I do not really know if they are working, and they're super expensive." },
+  { kind: "agent", text: "That's true. Supplements often take some time to show meaningful improvement. I can hear that you are more hydrated and energized than you were before you started, but still a bit below the average person. This is great progress for a week." },
+  { kind: "user_audio", audio: "/demo/user-4.wav", text: "That's pretty cool actually, but I do not feel like it." },
+  { kind: "agent", text: "It can take more time for mood to improve for this product, with most people seeing mood improvement about 3 weeks in. Diet contributes to mood too. Do you want to chat about meal planning?" },
+  { kind: "user_audio", audio: "/demo/user-5.wav", text: "Yes, I have been eating a lot of fast casual because of work. What are some quick meals I can make?" },
+  { kind: "reasoning", lines: [
+    "Suggesting meal plans tailored to elevated blood pressure.",
+  ] },
+  { kind: "tool", call: "suggest-meal-plan { style: \"low-sodium, fast\", target: \"manage blood pressure\" }" },
+  { kind: "agent", text: "I've added a meal protocol to your profile. Be sure to log your daily activities there!" },
+  { kind: "saved" },
+];
 
-    const interval = window.setInterval(() => {
-      setElapsed(Math.floor((recordedMsRef.current + Date.now() - startedAtRef.current) / 1000));
-    }, 250);
+type DemoMessage = { id: string; role: "agent" | "user"; text: string };
 
-    return () => window.clearInterval(interval);
-  }, [recording]);
+// Tapping the mic on the Brain Dump page plays this scripted check-in straight
+// through -- agent and user turns show live as chat bubbles (the same
+// treatment as the real Coach chat), while the reasoning and tool-call steps
+// behind them are never rendered here. Those two go out solely through
+// publishLiveTrace, for the external trace panel (presentation.html) to
+// render; publishConversationMessage carries the same agent/user turns shown
+// on screen out to that panel too, so both views stay in sync.
+function BrainDumpRecorder({ onComplete, onViewData }: { onComplete: (transcript: string | null) => void; onViewData: () => void }) {
+  const [phase, setPhase] = useState<"idle" | "playing" | "done">("idle");
+  const [messages, setMessages] = useState<DemoMessage[]>([]);
+  const [listening, setListening] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const idRef = useRef(0);
+  const cancelledRef = useRef(false);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     return () => {
-      socketRef.current?.close();
-      processorRef.current?.disconnect();
-      sourceRef.current?.disconnect();
-      audioContextRef.current?.close();
-      streamRef.current?.getTracks().forEach((track) => track.stop());
+      cancelledRef.current = true;
+      audioRef.current?.pause();
     };
   }, []);
 
-  function headers() {
-    return { "Content-Type": "application/json", Authorization: `Bearer ${apiToken}` };
+  useEffect(() => {
+    const list = listRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, [messages, listening]);
+
+  function wait(ms: number) {
+    return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
   }
 
-  function addStep(text: string, phase: StepPhase = "done", signals?: SignalResult[]) {
-    setSteps((current) => [...current, { id: stepIdRef.current++, text, phase, signals }]);
-    publishLiveTrace(
-      phase === "error" ? "error" : phase === "score" ? "model" : phase === "done" ? "result" : "stream",
-      phase === "connect" ? "WebSocket stream" : phase === "score" ? "Pulse analysis" : phase === "transcribe" ? "Transcript" : phase === "done" ? "Check-in complete" : "Check-in update",
-      text,
-      signals,
-    );
+  function addMessage(role: DemoMessage["role"], text: string) {
+    setMessages((current) => [...current, { id: `demo-${idRef.current++}`, role, text }]);
   }
 
-  function truncate(text: string, max: number) {
-    return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-  }
-
-  // Called once the backend reports a terminal outcome for this check-in ("result", or a
-  // processing_timeout it gave up waiting on) -- or by the safety-net timeout below if
-  // neither message ever arrives. Closes the socket and fetches the saved check-in.
-  async function finishRecording() {
-    if (finishedRef.current) return;
-    finishedRef.current = true;
-    socketRef.current?.close();
-    socketRef.current = null;
-    const checkinId = checkinIdRef.current;
-    if (!checkinId) {
-      setProcessing(false);
-      setError("Your recording could not be saved. Please try again.");
-      publishLiveTrace("error", "Finish check-in", "No check-in ID was available.");
-      return;
-    }
-    try {
-      publishLiveTrace("request", "POST /v1/checkins/{id}/finish", "Finalizing the saved recording and derived results.");
-      const finished = await fetch(`${apiBase}/v1/checkins/${checkinId}/finish`, { method: "POST", headers: headers() });
-      if (!finished.ok) throw new Error("Could not save the recording.");
-      const payload = await finished.json() as { transcript?: string | null };
-      publishLiveTrace("result", "Check-in saved", "The backend returned the completed check-in.");
-      setProcessing(false);
-      setSaved(true);
-      const transcript = payload.transcript ?? null;
-      setSavedTranscript(transcript);
-      onComplete(transcript);
-      if (continueConversationRef.current) {
-        const reflection = transcript?.trim() || "No transcript was captured for this check-in.";
-        onConversationReady(reflection);
-      }
-    } catch {
-      setProcessing(false);
-      setError("Your recording could not be saved. Please try again.");
-      publishLiveTrace("error", "Finish check-in failed", "The backend could not finalize this check-in.");
-    }
-  }
-
-  async function openStream(checkinId: string, ticket: string) {
-    const streamUrl = new URL(`${apiBase}/v1/checkins/${checkinId}/stream`);
-    streamUrl.protocol = streamUrl.protocol === "https:" ? "wss:" : "ws:";
-    streamUrl.searchParams.set("ticket", ticket);
-    publishLiveTrace("stream", "WS /v1/checkins/{id}/stream", "Opening the authenticated live PCM stream.");
-    const socket = new WebSocket(streamUrl);
-    socket.binaryType = "arraybuffer";
-    await new Promise<void>((resolve, reject) => {
-      socket.onopen = () => {
-        publishLiveTrace("stream", "WebSocket connected", "The server is ready to receive 16 kHz PCM audio.");
+  // Plays a clip while revealing its known text word-by-word, paced to that clip's
+  // real duration (not a fixed rate) -- the same illusion clinical_agent's replay
+  // uses (precomputed text revealed on a timer instead of running live Whisper),
+  // just driven by <audio>'s own loadedmetadata/duration rather than a fixed pace.
+  function playWithLiveTranscript(src: string, text: string, onPartial: (partial: string) => void) {
+    return new Promise<void>((resolve) => {
+      const audio = audioRef.current;
+      if (!audio) {
+        onPartial(text);
         resolve();
-      };
-      socket.onerror = () => {
-        publishLiveTrace("error", "WebSocket connection failed", "The secure audio stream could not be opened.");
-        reject(new Error("Could not open the secure audio stream."));
-      };
-    });
-    socket.onmessage = (event) => {
-      const message = JSON.parse(event.data) as {
-        type?: string; message?: string; text?: string; code?: string; chunk?: number;
-        job_id?: string; method?: string; path?: string; signals?: { name: string; level: string }[];
-      };
-      switch (message.type) {
-        case "connected":
-          addStep("Connected — ready to listen.", "connect");
-          break;
-        case "processing":
-          addStep("Analyzing your check-in…", "score");
-          break;
-        case "analyzing":
-          // One of these fires roughly every 15s of real speech, live, while you're
-          // still talking -- the overlapping-window scoring, not a single end-of-call read.
-          // The actual request, not a description of one.
-          addStep(`chunk ${message.chunk} → ${message.method} ${message.path} → job ${message.job_id}`, "score");
-          break;
-        case "job_result":
-          addStep(`chunk ${message.chunk} → job ${message.job_id} returned:`, "score", message.signals);
-          break;
-        case "transcribing":
-          addStep("Transcribing what you said…", "transcribe");
-          break;
-        case "transcript":
-          addStep(message.text ? `Heard: “${truncate(message.text, 70)}”` : "Transcript ready.", "transcribe");
-          break;
-        case "result":
-          addStep("Saved to your trends.", "done");
-          void finishRecording();
-          break;
-        case "error":
-          // processing_timeout is terminal but not fatal: the backend gave up waiting on
-          // this connection, not on the check-in itself, which keeps completing in the
-          // background. pulse_processing_failed/transcription_failed are per-step and
-          // non-fatal too -- the backend still finishes and will send "result". Anything
-          // else (e.g. invalid_pcm_frame, mid-recording) is a real, blocking problem.
-          if (message.code === "processing_timeout") {
-            addStep("Taking longer than expected — finishing in the background.", "error");
-            void finishRecording();
-          } else if (message.code === "pulse_processing_failed" || message.code === "transcription_failed") {
-            addStep(message.message ?? "One step had an issue, but your check-in is still being saved.", "error");
-          } else {
-            setError(message.message ?? "Audio processing is unavailable right now.");
-          }
-          break;
-        default:
-          break;
+        return;
       }
-    };
-    socketRef.current = socket;
-    socket.send(JSON.stringify({ type: "checkin.start", sample_rate: 16000, encoding: "pcm_s16le" }));
-    return socket;
-  }
-
-  function stopCapture() {
-    processorRef.current?.disconnect();
-    sourceRef.current?.disconnect();
-    void audioContextRef.current?.close();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    processorRef.current = null;
-    sourceRef.current = null;
-    audioContextRef.current = null;
-    streamRef.current = null;
-  }
-
-  async function startRecording() {
-    setError(null);
-    setSaved(false);
-    setSavedTranscript(null);
-    setSteps([]);
-    sentAudioRef.current = false;
-    continueConversationRef.current = false;
-
-    if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) {
-      setError("Live audio recording is not available in this browser.");
-      return;
-    }
-
-    try {
-      publishLiveTrace("request", "POST /v1/checkins", "Creating a new Morning Check-in and one-use stream ticket.");
-      const created = await fetch(`${apiBase}/v1/checkins`, {
-        method: "POST",
-        headers: headers(),
-        body: JSON.stringify({ source: "morning-check-in" }),
-      });
-      if (!created.ok) throw new Error("Could not create a Morning Check-in.");
-      const { checkin, stream_ticket: ticket } = await created.json() as { checkin: { checkin_id: string }; stream_ticket: string };
-      publishLiveTrace("result", "Check-in created", `Check-in ${checkin.checkin_id.slice(0, 8)}… is ready to stream.`);
-      const socket = await openStream(checkin.checkin_id, ticket);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      const context = new AudioContext();
-      await context.audioWorklet.addModule("/pcm-processor.js");
-      const source = context.createMediaStreamSource(stream);
-      const processor = new AudioWorkletNode(context, "pcm-processor", { processorOptions: { targetRate: 16000 } });
-      processor.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-        if (socket.readyState === WebSocket.OPEN) {
-          if (!sentAudioRef.current) {
-            sentAudioRef.current = true;
-            publishLiveTrace("audio", "PCM audio streaming", "16 kHz mono audio frames are now being sent over the live stream.");
+      const words = text.split(" ");
+      let wordTimer: number | null = null;
+      let settled = false;
+      function finish() {
+        if (settled) return;
+        settled = true;
+        if (wordTimer !== null) window.clearInterval(wordTimer);
+        onPartial(text);
+        resolve();
+      }
+      audio.onended = finish;
+      audio.onerror = finish;
+      audio.onloadedmetadata = () => {
+        const durationMs = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration * 1000 : words.length * 260;
+        const perWord = Math.max(70, durationMs / words.length);
+        let revealed = 0;
+        wordTimer = window.setInterval(() => {
+          revealed += 1;
+          const done = revealed >= words.length;
+          onPartial(done ? words.join(" ") : `${words.slice(0, revealed).join(" ")} ▍`);
+          if (done && wordTimer !== null) {
+            window.clearInterval(wordTimer);
+            wordTimer = null;
           }
-          socket.send(event.data);
-        }
+        }, perWord);
+        void audio.play().catch(finish);
       };
-      source.connect(processor);
-      processor.connect(context.destination);
-      audioContextRef.current = context;
-      sourceRef.current = source;
-      processorRef.current = processor;
-      checkinIdRef.current = checkin.checkin_id;
-      startedAtRef.current = Date.now();
-      recordedMsRef.current = 0;
-      setElapsed(0);
-      setRecording(true);
-    } catch {
-      stopCapture();
-      socketRef.current?.close();
-      setError("Microphone access and the private check-in service are needed to record.");
-      publishLiveTrace("error", "Recording could not start", "Microphone access or the private check-in API was unavailable.");
+      audio.src = src;
+      audio.load();
+    });
+  }
+
+  async function run() {
+    cancelledRef.current = false;
+    setMessages([]);
+    setListening(false);
+    setPhase("playing");
+    publishLiveTrace("result", "Check-in started", "Recording a Morning Check-in and coach conversation.");
+    await wait(900);
+    for (const event of DEMO_SCRIPT) {
+      if (cancelledRef.current) return;
+      if (event.kind === "agent") {
+        setListening(false);
+        addMessage("agent", event.text);
+        publishConversationMessage("agent", event.text);
+        await wait(2600);
+      } else if (event.kind === "user_audio") {
+        setListening(true);
+        publishLiveTrace("stream", "Transcribing", "Converting your check-in audio to text as it's spoken.");
+        const liveId = `demo-${idRef.current++}`;
+        let revealedAny = false;
+        setMessages((current) => [...current, { id: liveId, role: "user", text: "" }]);
+        await playWithLiveTranscript(event.audio, event.text, (partial) => {
+          if (!revealedAny && partial.trim().length > 0) {
+            revealedAny = true;
+            setListening(false);
+          }
+          setMessages((current) => current.map((message) => (message.id === liveId ? { ...message, text: partial } : message)));
+        });
+        if (cancelledRef.current) return;
+        setListening(false);
+        publishConversationMessage("user", event.text);
+        await wait(1600);
+      } else if (event.kind === "pulse_call") {
+        // The actual outgoing request, not a description of one -- same endpoint,
+        // same job-id/result shape the real overlapping-window bucketer produces.
+        publishLiveTrace("model", "Pulse analysis", `chunk ${event.chunk} (${event.window}) → POST ${PULSE_ENDPOINT} → job ${event.jobId}`);
+        await wait(1700);
+        publishLiveTrace("model", "Pulse analysis", `chunk ${event.chunk} → job ${event.jobId} returned:`, event.signals);
+        await wait(2600);
+      } else if (event.kind === "reasoning") {
+        // Reasoning never reaches `messages` -- trace-only, by design.
+        for (const line of event.lines) {
+          if (cancelledRef.current) return;
+          publishLiveTrace("model", "Agent reasoning", line);
+          await wait(1700);
+        }
+        await wait(1000);
+      } else if (event.kind === "tool") {
+        // Tool calls never reach `messages` either -- trace-only.
+        publishLiveTrace("request", "Tool call", event.call);
+        await wait(2000);
+      } else if (event.kind === "saved") {
+        publishLiveTrace("result", "Check-in saved", "The check-in was saved and scored.");
+        await wait(1600);
+      }
     }
+    if (cancelledRef.current) return;
+    setPhase("done");
+    onComplete(null);
   }
 
-  function pauseRecording() {
-    const context = audioContextRef.current;
-    if (!context || !recording) return;
-    recordedMsRef.current += Date.now() - startedAtRef.current;
-    setElapsed(Math.floor(recordedMsRef.current / 1000));
-    void context.suspend();
-    socketRef.current?.send(JSON.stringify({ type: "checkin.pause" }));
-    publishLiveTrace("stream", "checkin.pause", "Audio capture has been paused.");
-    setRecording(false);
-    setPaused(true);
-  }
-
-  function resumeRecording() {
-    const context = audioContextRef.current;
-    if (!context || !paused) return;
-    startedAtRef.current = Date.now();
-    void context.resume();
-    socketRef.current?.send(JSON.stringify({ type: "checkin.resume" }));
-    publishLiveTrace("stream", "checkin.resume", "Audio capture has resumed.");
-    setPaused(false);
-    setRecording(true);
-  }
-
-  function saveRecording(startConversation = false) {
-    if ((!recording && !paused) || elapsed < minimumSeconds || !checkinIdRef.current) return;
-    continueConversationRef.current = startConversation;
-    if (recording) {
-      recordedMsRef.current += Date.now() - startedAtRef.current;
-      setElapsed(Math.floor(recordedMsRef.current / 1000));
-      void audioContextRef.current?.suspend();
-    }
-    finishedRef.current = false;
-    // Not clearing `steps` here -- the log now spans the whole session (connect
-    // through result), not just the processing phase, so what already happened
-    // during recording (e.g. live "analyzing" windows) stays visible.
-    setProcessing(true);
-    setRecording(false);
-    setPaused(false);
-    socketRef.current?.send(JSON.stringify({ type: "checkin.end" }));
-    publishLiveTrace("stream", "checkin.end", "Audio capture ended; waiting for processing and transcription.");
-    stopCapture();
-    // The backend now keeps this socket open until the check-in's Amplifier scoring and
-    // transcription both actually finish -- real API calls, so this can take real
-    // seconds, not the fixed 250ms this used to wait before force-closing and calling
-    // /finish regardless of whether anything had actually completed. onmessage above
-    // drives finishRecording() once a terminal event arrives; this is only the backstop
-    // in case that message itself never does (e.g. a dropped connection).
-    window.setTimeout(() => {
-      if (finishedRef.current) return;
-      addStep("Still working on it — check back shortly.");
-      void finishRecording();
-    }, 130_000);
-  }
-
-  const formattedTime = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
-
-  if (processing) {
-    return (
-      <section className="brain-dump checkin-processing" aria-label="Saving your Morning Check-in">
-        <p className="checkin-activity-hd">{continueConversationRef.current ? "Starting conversation…" : "Saving your check-in…"}</p>
-        <p className="checkin-activity-current" aria-live="polite">{continueConversationRef.current ? "Your coach will receive your reflection as soon as the transcript is ready." : "Your reflection is being saved and prepared for your Trends."}</p>
-        {error ? <span className="recording-error" role="alert">{error}</span> : null}
-      </section>
-    );
-  }
-
-  if (saved) {
+  if (phase === "done") {
     return (
       <section className="brain-dump checkin-saved" aria-label="Morning Check-in saved">
         <p className="saved-confirmation" role="status" aria-live="polite">saved.</p>
         <div className="saved-actions" aria-label="Next steps">
           <button type="button" className="save-audio" onClick={onViewData}>View Data</button>
-          <button type="button" className="stop-recording" onClick={() => onConversationReady(savedTranscript?.trim() || "No transcript was captured for this check-in.")}>Continue conversation in chat</button>
+          <button type="button" className="stop-recording" onClick={() => void run()}>Play again</button>
+        </div>
+      </section>
+    );
+  }
+
+  if (phase === "playing") {
+    return (
+      <section className="conversation-screen" aria-label="Morning Check-in conversation">
+        <audio ref={audioRef} hidden />
+        <div className="conversation-messages" ref={listRef}>
+          {messages.map((message) => (
+            <p key={message.id} className={message.role === "agent" ? "coach-bubble" : "member-bubble"}>{message.text}</p>
+          ))}
+          {listening ? <p className="coach-typing" aria-live="polite">Listening<span>···</span></p> : null}
         </div>
       </section>
     );
@@ -615,10 +506,9 @@ function BrainDumpRecorder({ onComplete, onViewData, onConversationReady, minimu
 
   return (
     <section className="brain-dump" aria-label="Morning Check-in voice reflection">
-      <button type="button" className={recording ? "microphone is-listening" : paused ? "microphone is-paused" : "microphone"} onClick={recording ? pauseRecording : paused ? resumeRecording : startRecording} aria-pressed={recording} aria-label={recording ? "Pause Morning Check-in recording" : paused ? "Resume Morning Check-in recording" : "Start recording Morning Check-in"}>
-        {recording ? <PauseIcon width={35} height={35} /> : paused ? <PlayIcon width={35} height={35} /> : <MicrophoneIcon size={35} weight="regular" />}
+      <button type="button" className="microphone" onClick={() => void run()} aria-label="Start Morning Check-in">
+        <MicrophoneIcon size={35} weight="regular" />
       </button>
-      {recording || paused ? <strong className="recording-timer" aria-live="polite">{formattedTime}</strong> : null}
       <div className="checkin-checklist" aria-label="Morning Check-in guidance">
         <div><span className="checkin-checkmark"><CheckIcon width={14} height={14} /></span><span>Find a quiet space.</span></div>
         <div><span className="checkin-checkmark"><CheckIcon width={14} height={14} /></span><span>Talk for at least 30 seconds.</span></div>
@@ -627,13 +517,6 @@ function BrainDumpRecorder({ onComplete, onViewData, onConversationReady, minimu
       <footer className="checkin-footer">
         <p>Reminder set for 8:00 am · <span>Change</span></p>
       </footer>
-      {error ? <span className="recording-error" role="alert">{error}</span> : null}
-      <div className="recorder-actions">
-        {elapsed >= minimumSeconds && (recording || paused) ? <>
-          <button type="button" className="save-audio" onClick={() => saveRecording()} disabled={saved}>Save</button>
-          <button type="button" className="stop-recording" onClick={() => saveRecording(true)}>Continue Conversation</button>
-        </> : null}
-      </div>
     </section>
   );
 }
