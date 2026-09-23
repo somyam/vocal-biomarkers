@@ -296,41 +296,64 @@ const PULSE_ENDPOINT = `/v2/models/pulse/groups/${PULSE_GROUP_ID}/analyze/longit
 // Every line here is exactly what public/demo/user-*.wav actually says -- generated from
 // this same text -- so what's shown on screen and what's playing never drift apart.
 const DEMO_SCRIPT: DemoEvent[] = [
+  {
+    kind: "reasoning", lines: [
+      "Load user habit logs. Load Morning-check in history."
+    ]
+  },
   { kind: "agent", text: "How are you feeling today?" },
   { kind: "user_audio", audio: "/demo/user-1.wav", text: "I'm having a good morning, but I have a lot of work coming up this week. My boss is out of office so I have been taking on a lot more work. My kids are on summer session so I have to shuttle them around to their activities and watch them during the days. I tripped over some toys yesterday and got really angry which I feel bad about. I have been listening to some good health podcasts, but not sure what is actually useful because there is so much information. I've been sticking to a good morning routine, but I haven't been able to make it to the gym because my back is hurting and I've been ordering in food all week." },
   // Mirrors the real overlapping-window bucketer: a partial read at the first hop (0-15s),
   // then a fuller, more confident read once the whole clip has landed (0-30s).
-  { kind: "pulse_call", chunk: 0, window: "0:00–0:15", jobId: "pulse-4f2a1c9e", signals: [
-    { name: "anxiety", level: "consider" },
-    { name: "stress", level: "consider" },
-  ] },
-  { kind: "pulse_call", chunk: 1, window: "0:00–0:30", jobId: "pulse-9b7d3e12", signals: [
-    { name: "anxiety", level: "moderate" },
-    { name: "stress", level: "moderate" },
-    { name: "elevated-blood-pressure", level: "consider" },
-    { name: "dehydration", level: "low" },
-    { name: "fatigue", level: "low" },
-  ] },
+  {
+    kind: "pulse_call", chunk: 0, window: "0:00–0:15", jobId: "pulse-4f2a1c9e", signals: [
+      { name: "mood-disruption", level: "low" },
+      { name: "anxiety", level: "consider" },
+      { name: "stress", level: "consider" },
+      { name: "fatigue", level: "none" },
+      { name: "elevated-blood-pressure", level: "none" },
+      { name: "dehydration", level: "none" },
+    ]
+  },
+  {
+    kind: "pulse_call", chunk: 1, window: "0:00–0:30", jobId: "pulse-9b7d3e12", signals: [
+      { name: "mood-disruption", level: "low" },
+      { name: "anxiety", level: "moderate" },
+      { name: "stress", level: "moderate" },
+      { name: "fatigue", level: "low" },
+      { name: "elevated-blood-pressure", level: "consider" },
+      { name: "dehydration", level: "low" },
+    ]
+  },
   { kind: "saved" },
-  { kind: "reasoning", lines: [
-    "Parsing the check-in transcript for stress, workload, and mood language.",
-    "GET /v2/groups/user-1024/longitudinal — pulling Maya's trajectory before responding.",
-    "Anxiety and stress are reading elevated against her personal baseline this morning.",
-    "Elevated-blood-pressure is up slightly against baseline — a small deviation, not a flag on its own.",
-    "Dehydration and fatigue are both trending down compared to recent check-ins — genuine improvement, not noise.",
-  ] },
+  {
+    kind: "reasoning", lines: [
+      "No audio issues detected and personal baseline weight > 0.7 so baseline has been established.",
+      "Parsing the check-in transcript for stress and mood language.",
+      "Anxiety and stress are reading slightly elevated against her personal baseline this morning. This aligns with user reported condition.",
+      "Elevated-blood-pressure has been trending up for the last 3 days — not a large enough change from baseline to flag to user.",
+      "Dehydration and fatigue are both trending down compared to recent check-ins",
+    ]
+  },
   { kind: "agent", text: "Sorry about all the work and the back pain! I can hear that you are a bit more stressed than your usual, which fits what you are describing. Have you tried an at-home meditation? I can add one to your profile." },
   { kind: "user_audio", audio: "/demo/user-2.wav", text: "Sure." },
   { kind: "tool", call: "add-protocol { name: \"at-home meditation\", frequency: \"daily\", reason: \"anxiety and stress elevated vs. baseline\" }" },
   { kind: "agent", text: "Yes, and how have you been enjoying the new supplements you are taking?" },
+  {
+    kind: "reasoning", lines: ["GET /v2/groups/user-1024/longitudinal?from=2026-07-15&to=2026-09-23 pulling Maya's trajectory for user context using ",
+      "Reading trajectory since starting new supplements."
+    ]
+  },
   { kind: "user_audio", audio: "/demo/user-3.wav", text: "I've only been on them for a week so I do not really know if they are working, and they're super expensive." },
   { kind: "agent", text: "That's true. Supplements often take some time to show meaningful improvement. I can hear that you are more hydrated and energized than you were before you started, but still a bit below the average person. This is great progress for a week." },
   { kind: "user_audio", audio: "/demo/user-4.wav", text: "That's pretty cool actually, but I do not feel like it." },
   { kind: "agent", text: "It can take more time for mood to improve for this product, with most people seeing mood improvement about 3 weeks in. Diet contributes to mood too. Do you want to chat about meal planning?" },
   { kind: "user_audio", audio: "/demo/user-5.wav", text: "Yes, I have been eating a lot of fast casual because of work. What are some quick meals I can make?" },
-  { kind: "reasoning", lines: [
-    "Suggesting meal plans tailored to elevated blood pressure.",
-  ] },
+  {
+    kind: "reasoning", lines: [
+      "Suggesting meal plans tailored to elevated blood pressure without surfacing blood pressure issues to user.",
+    ]
+  },
   { kind: "tool", call: "suggest-meal-plan { style: \"low-sodium, fast\", target: \"manage blood pressure\" }" },
   { kind: "agent", text: "I've added a meal protocol to your profile. Be sure to log your daily activities there!" },
   { kind: "saved" },
@@ -434,7 +457,6 @@ function BrainDumpRecorder({ onComplete, onViewData }: { onComplete: (transcript
         await wait(2600);
       } else if (event.kind === "user_audio") {
         setListening(true);
-        publishLiveTrace("stream", "Transcribing", "Converting your check-in audio to text as it's spoken.");
         const liveId = `demo-${idRef.current++}`;
         let revealedAny = false;
         setMessages((current) => [...current, { id: liveId, role: "user", text: "" }]);
@@ -454,7 +476,7 @@ function BrainDumpRecorder({ onComplete, onViewData }: { onComplete: (transcript
         // same job-id/result shape the real overlapping-window bucketer produces.
         publishLiveTrace("model", "Pulse analysis", `chunk ${event.chunk} (${event.window}) → POST ${PULSE_ENDPOINT} → job ${event.jobId}`);
         await wait(1700);
-        publishLiveTrace("model", "Pulse analysis", `chunk ${event.chunk} → job ${event.jobId} returned:`, event.signals);
+        publishLiveTrace("model", "Pulse analysis", `chunk ${event.chunk} → job ${event.jobId} returned — No audio issues:`, event.signals);
         await wait(2600);
       } else if (event.kind === "reasoning") {
         // Reasoning never reaches `messages` -- trace-only, by design.
