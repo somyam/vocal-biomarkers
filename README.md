@@ -5,9 +5,7 @@ paired with a voice "Morning Check-in" that's scored for wellness signals — mo
 disruption, anxiety, stress, fatigue, elevated blood pressure, and dehydration —
 via Amplifier's Pulse API. 
 
-<video src="https://github.com" controls width="100%">
-  Your browser does not support the video tag.
-</video>
+<video src="https://github.com/somyam/vocal-biomarkers/amplifier-agent-demo.mov" autoplay loop muted playsinline width="100%"></video>
 
 ## What's in this repo
 
