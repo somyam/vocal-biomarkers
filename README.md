@@ -11,7 +11,7 @@ https://github.com/user-attachments/assets/17e03165-f222-4d02-bc8e-31601f13e025
 
 **`src/` — the mobile app.** React + TypeScript, rendered inside a calibrated device-simulator runtime (src/mobile/: iPhone and Pixel 10 frames, live status bar, on-screen keyboard). All app-specific screens and logic live in src/Prototype.tsx and src/prototype.css — everything else under src/ is protected scaffold (see AGENTS.md).
 
-**`backend/` — FastAPI + Postgres, dockerized. Streams live
+`backend/` — FastAPI + Postgres, dockerized. Streams live
 16kHz PCM audio over WebSocket, transcribes it locally (faster-whisper), and
 submits 30-second chunks with a 15 second hop to Amplifier's longitudinal
 Pulse endpoint (`POST /v2/models/pulse/groups/{group_id}/analyze/longitudinal`)
