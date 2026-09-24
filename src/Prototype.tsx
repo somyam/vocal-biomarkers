@@ -340,14 +340,15 @@ const DEMO_SCRIPT: DemoEvent[] = [
   { kind: "tool", call: "add-protocol { name: \"at-home meditation\", frequency: \"daily\", reason: \"anxiety and stress elevated vs. baseline\" }" },
   { kind: "agent", text: "Yes, and how have you been enjoying the new supplements you are taking?" },
   {
-    kind: "reasoning", lines: ["GET /v2/groups/user-1024/longitudinal?from=2026-07-15&to=2026-09-23 pulling Maya's trajectory for user context using ",
-      "Reading trajectory since starting new supplements."
+    kind: "reasoning", lines: [
+      "GET /v2/groups/user-1024/longitudinal?from=2026-07-15&to=2026-09-23 — pulling Maya's trajectory for context.",
+      "Reading trajectory since starting new supplements.",
     ]
   },
   { kind: "user_audio", audio: "/demo/user-3.wav", text: "I've only been on them for a week so I do not really know if they are working, and they're super expensive." },
-  { kind: "agent", text: "That's true. Supplements often take some time to show meaningful improvement. I can hear that you are more hydrated and energized than you were before you started, but still a bit below the average person. This is great progress for a week." },
+  { kind: "agent", text: "That's fair — a week isn't long. I have noticed your hydration and energy readings trending up over this same week, though it's too early to say that's the supplement at work rather than anything else going on. Worth watching as you keep going." },
   { kind: "user_audio", audio: "/demo/user-4.wav", text: "That's pretty cool actually, but I do not feel like it." },
-  { kind: "agent", text: "It can take more time for mood to improve for this product, with most people seeing mood improvement about 3 weeks in. Diet contributes to mood too. Do you want to chat about meal planning?" },
+  { kind: "agent", text: "Mood tends to shift more slowly than hydration or energy, and I don't have enough data yet to say if or when this one will move for you. Diet plays a role too — want to chat about meal planning?" },
   { kind: "user_audio", audio: "/demo/user-5.wav", text: "Yes, I have been eating a lot of fast casual because of work. What are some quick meals I can make?" },
   {
     kind: "reasoning", lines: [
