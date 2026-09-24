@@ -9,14 +9,9 @@ https://github.com/user-attachments/assets/17e03165-f222-4d02-bc8e-31601f13e025
 
 ## What's in this repo
 
-**`src/` — the mobile app.** React + TypeScript, running inside a calibrated
-device-simulator runtime (`src/mobile/`: iPhone/Pixel 10 frame, live status
-bar, on-screen keyboard). App-specific screens and logic live in
-`src/Prototype.tsx` and `src/prototype.css`; the device chrome around it is
-scaffold-owned — see `AGENTS.md` before touching anything outside those two
-files.
+**`src/` — the mobile app.** React + TypeScript, rendered inside a calibrated device-simulator runtime (src/mobile/: iPhone and Pixel 10 frames, live status bar, on-screen keyboard). All app-specific screens and logic live in src/Prototype.tsx and src/prototype.css — everything else under src/ is protected scaffold (see AGENTS.md).
 
-**`backend/` — the real API.** FastAPI + Postgres, dockerized. Streams live
+**`backend/` ** FastAPI + Postgres, dockerized. Streams live
 16kHz PCM audio over WebSocket, transcribes it locally (faster-whisper), and
 submits 30-second chunks with a 15 second hop to Amplifier's longitudinal
 Pulse endpoint (`POST /v2/models/pulse/groups/{group_id}/analyze/longitudinal`)
@@ -28,11 +23,7 @@ mockup + "Live Agent Trace" log) that the app pushes `postMessage` events into,
 narrating what the API calls, signal levels, and agent reasoning would look
 like during an example check-in.
 
-The real, working backend pipeline is the backend described above — WebSocket
-streaming, live transcription, real Amplifier scoring — it's just not wired up
-to this particular scripted demo screen. Be precise about that distinction
-when presenting this: the backend that can do it for real exists and works;
-this specific screen doesn't call it.
+The real, working backend pipeline is the backend described in backend/README.md. It includes WebSocket streaming, live transcription, real Amplifier API requests. The backend/ folder is not wired up to this particular scripted demo screen for presentation purposes.
 
 ## Running the application
 
