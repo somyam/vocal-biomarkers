@@ -7,7 +7,7 @@ via Amplifier's Pulse API.
 
 https://github.com/user-attachments/assets/17e03165-f222-4d02-bc8e-31601f13e025
 
-## What's in this repo
+## In this repo
 
 **`src/` — the mobile app.** React + TypeScript, rendered inside a calibrated device-simulator runtime (src/mobile/: iPhone and Pixel 10 frames, live status bar, on-screen keyboard). All app-specific screens and logic live in src/Prototype.tsx and src/prototype.css — everything else under src/ is protected scaffold (see AGENTS.md).
 
