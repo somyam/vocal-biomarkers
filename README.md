@@ -3,9 +3,11 @@
 A mobile app prototype for a longevity/wellness membership: a daily habit tracker
 paired with a voice "Morning Check-in" that's scored for wellness signals — mood
 disruption, anxiety, stress, fatigue, elevated blood pressure, and dehydration —
-via Amplifier's Pulse API. Built to support a pilot proposal for using vocal
-biomarkers to drive app stickiness and generate a labeled dataset for future
-causality work.
+via Amplifier's Pulse API. 
+
+<video src="https://github.com" controls width="100%">
+  Your browser does not support the video tag.
+</video>
 
 ## What's in this repo
 
