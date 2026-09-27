@@ -33,6 +33,11 @@ class StreamSession:
     paused: bool = False
     finalized: bool = False
     processing_tasks: list[asyncio.Task[None]] = field(default_factory=list)
+    # Live partial transcription: re-transcribes the whole clip so far on the same hop
+    # cadence as Amplifier scoring, kept out of `processing_tasks` so a still-running
+    # partial pass never delays `finalize()`'s wait on the real, authoritative transcript.
+    transcribing_partial: bool = False
+    partial_tasks: list[asyncio.Task[None]] = field(default_factory=list)
 
     async def emit(self, event: str, **payload: Any) -> None:
         if self.socket is None:
@@ -60,12 +65,24 @@ class StreamSession:
         if len(pcm) % 2:
             await self.emit("error", code="invalid_pcm_frame", message="Audio frames must contain signed 16-bit PCM samples.")
             return
-        for chunk in self.bucketer.feed(pcm):
+        chunks = self.bucketer.feed(pcm)
+        for chunk in chunks:
             self._queue_pulse_job(chunk)
+        if chunks:
+            self._queue_partial_transcript()
         await self.emit("recording", state="recording", elapsed_seconds=round(self.bucketer.seconds, 2))
 
     def _queue_pulse_job(self, chunk: AudioChunk) -> None:
         self.processing_tasks.append(asyncio.create_task(process_chunk(self.checkin_id, chunk, self)))
+
+    def _queue_partial_transcript(self) -> None:
+        # Skip if a previous hop's pass hasn't finished -- the next hop's audio will
+        # include this one anyway, so nothing is lost by waiting rather than stacking
+        # concurrent Whisper calls on top of each other.
+        if self.transcribing_partial:
+            return
+        self.transcribing_partial = True
+        self.partial_tasks.append(asyncio.create_task(partial_transcribe(self)))
 
     async def finalize(self) -> None:
         if self.finalized:
@@ -78,9 +95,11 @@ class StreamSession:
             if not db.scalar(select(Recording).where(Recording.checkin_id == self.checkin_id)):
                 db.add(Recording(checkin_id=self.checkin_id, user_id=self.user_id, audio_wav=wav))
                 db.commit()
-        # One pass over the whole clip, not per-chunk -- a check-in is a single short
-        # personal recording, not a two-party encounter needing live partial text. Runs
-        # concurrently with the queued Amplifier jobs via the same wait/timeout below.
+        # The authoritative, persisted transcript -- one final pass over the whole clip.
+        # `partial_transcribe` already streamed live, unpersisted previews during
+        # recording (see `_queue_partial_transcript`); this is the pass that actually
+        # writes `checkin.transcript`. Runs concurrently with the queued Amplifier jobs
+        # via the same wait/timeout below.
         self.processing_tasks.append(asyncio.create_task(transcribe_checkin(self.checkin_id, wav, self)))
         await self.emit("processing", elapsed_seconds=round(self.bucketer.seconds, 2))
         # Keep the socket open until every queued chunk's real Amplifier round trip and the
@@ -162,6 +181,22 @@ async def process_chunk(checkin_id: str, chunk: AudioChunk, stream: StreamSessio
         if stream:
             await stream.emit("error", code="pulse_processing_failed", message="We could not analyze this audio.")
         await refresh_checkin(checkin_id, stream)
+
+
+async def partial_transcribe(stream: StreamSession) -> None:
+    """Best-effort live preview: re-transcribes the whole clip recorded so far and emits
+    it as `transcript_partial`. Never touches the database and never blocks on failure --
+    the single authoritative pass in `transcribe_checkin` at `checkin.end` is what actually
+    gets persisted to `checkin.transcript`."""
+    try:
+        wav = pcm_to_wav(bytes(stream.bucketer.buffer), stream.bucketer.sample_rate)
+        text = await transcriber().transcribe(wav)
+        if text:
+            await stream.emit("transcript_partial", text=text)
+    except Exception:
+        pass
+    finally:
+        stream.transcribing_partial = False
 
 
 async def transcribe_checkin(checkin_id: str, wav_bytes: bytes, stream: StreamSession | None = None) -> None:

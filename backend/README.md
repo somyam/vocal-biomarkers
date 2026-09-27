@@ -29,6 +29,9 @@ are `null` until the subject's group has an established baseline.
 Gate any trend or intervention-effect analysis on `baseline_score is not None`.
 
 `checkins.transcript` holds a local speech-to-text transcription of the check-in's full
-recording (faster-whisper, `WHISPER_MODEL` default `base`) — one pass over the whole
-clip at `checkin.end`.
+recording (faster-whisper, `WHISPER_MODEL` default `base`) — the authoritative pass runs
+once, over the whole clip, at `checkin.end`. While recording, the same clip-so-far is also
+re-transcribed on every 15-second hop (same cadence as Pulse scoring) and streamed to the
+client as `transcript_partial` for a live preview; those partial passes are never persisted
+and never gate completion — only the final `checkin.end` pass writes `checkin.transcript`.
 

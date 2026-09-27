@@ -11,11 +11,10 @@ TERMINAL = {"done", "failed", "timed-out"}
 
 
 def pulse_group_id(user_id: str) -> str:
-    """A longitudinal group represents exactly one subject — Amplifier's own rule, not
-    ours. Derive the group id from the user id rather than storing it, so nothing can
+    """A longitudinal group represents exactly one subject.
+    Derive the group id from the user id, so we cannot
     accidentally register two members' recordings into the same group."""
     return f"user-{user_id}"
-
 
 class PulseClient:
     def __init__(self):
@@ -27,9 +26,8 @@ class PulseClient:
         return bool(self.s.amplifier_account_id and self.s.amplifier_api_key)
 
     async def submit(self, group_id: str, wav_bytes: bytes, recorded_at: str) -> dict:
-        """Submit into `group_id`'s longitudinal history rather than scoring the recording
-        on its own — `POST /v2/models/pulse/groups/{group_id}/analyze/longitudinal`. The
-        completed result's `result.signals[]` carries `baseline_score`,
+        """Submit into `group_id`'s longitudinal history using pulse — `POST /v2/models/pulse/groups/{group_id}/analyze/longitudinal`. 
+        The completed result's `result.signals[]` carries `baseline_score`,
         `deviation_from_baseline`, `anomaly`, `z_score`, and `population_z` once the
         subject's group has enough spaced readings; they are `null` before that.
         `group_id` must be per-subject (see `pulse_group_id`). `recorded_at` (ISO 8601)
@@ -77,7 +75,6 @@ def quality_view(result: dict | list[dict]) -> dict:
         issues.extend(((payload.get("audio_quality") or {}).get("issues") or []))
     rerecord = any(issue in {"poor_voice_quality", "insufficient_speech", "high_background_noise", "invalid_speaker"} for issue in issues)
     return {"status": "needs_rerecord" if rerecord else "clear", "issues": issues}
-
 
 def trend_view(results: list[dict]) -> dict:
     if not results:
