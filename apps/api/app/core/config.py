@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     finalize_timeout_seconds: float = 120.0
     whisper_model: str = "base"
     mock_whisper: bool = False
+    # How often live_transcript previews re-transcribe the clip so far. Independent of
+    # the Pulse hop cadence (audio.py's `hop_seconds`) -- transcription has no floor to
+    # respect, so this can run shorter for a snappier live caption.
+    partial_transcript_interval_seconds: float = 3.0
 
 
 @lru_cache

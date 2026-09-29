@@ -33,11 +33,13 @@ class StreamSession:
     paused: bool = False
     finalized: bool = False
     processing_tasks: list[asyncio.Task[None]] = field(default_factory=list)
-    # Live partial transcription: re-transcribes the whole clip so far on the same hop
-    # cadence as Amplifier scoring, kept out of `processing_tasks` so a still-running
-    # partial pass never delays `finalize()`'s wait on the real, authoritative transcript.
+    # Live partial transcription: re-transcribes the whole clip so far on its own timer
+    # (partial_transcript_interval_seconds), decoupled from Amplifier's hop cadence, kept
+    # out of `processing_tasks` so a still-running partial pass never delays `finalize()`'s
+    # wait on the real, authoritative transcript.
     transcribing_partial: bool = False
     partial_tasks: list[asyncio.Task[None]] = field(default_factory=list)
+    partial_loop_task: asyncio.Task[None] | None = None
 
     async def emit(self, event: str, **payload: Any) -> None:
         if self.socket is None:
@@ -50,6 +52,8 @@ class StreamSession:
     async def start(self) -> None:
         self.started, self.paused = True, False
         await self.emit("recording", state="recording", elapsed_seconds=0)
+        if self.partial_loop_task is None:
+            self.partial_loop_task = asyncio.create_task(self._partial_transcript_loop())
 
     async def pause(self) -> None:
         self.paused = True
@@ -68,21 +72,31 @@ class StreamSession:
         chunks = self.bucketer.feed(pcm)
         for chunk in chunks:
             self._queue_pulse_job(chunk)
-        if chunks:
-            self._queue_partial_transcript()
         await self.emit("recording", state="recording", elapsed_seconds=round(self.bucketer.seconds, 2))
 
     def _queue_pulse_job(self, chunk: AudioChunk) -> None:
         self.processing_tasks.append(asyncio.create_task(process_chunk(self.checkin_id, chunk, self)))
 
     def _queue_partial_transcript(self) -> None:
-        # Skip if a previous hop's pass hasn't finished -- the next hop's audio will
+        # Skip if a previous pass hasn't finished -- the next timer tick's audio will
         # include this one anyway, so nothing is lost by waiting rather than stacking
         # concurrent Whisper calls on top of each other.
         if self.transcribing_partial:
             return
         self.transcribing_partial = True
         self.partial_tasks.append(asyncio.create_task(partial_transcribe(self)))
+
+    async def _partial_transcript_loop(self) -> None:
+        """Independent timer driving live transcript previews, so they update on
+        `partial_transcript_interval_seconds` rather than waiting on Amplifier's
+        30s/15s hop cadence (see AudioBucketer)."""
+        interval = settings().partial_transcript_interval_seconds
+        while not self.finalized:
+            await asyncio.sleep(interval)
+            if self.finalized:
+                break
+            if self.started and not self.paused and self.bucketer.seconds > 0:
+                self._queue_partial_transcript()
 
     async def finalize(self) -> None:
         if self.finalized:

@@ -12,7 +12,7 @@ services:
       POSTGRES_DB: vocal_biomarkers
       POSTGRES_USER: vocal
       POSTGRES_PASSWORD: vocal
-    ports: ["5432:5432"]
+    ports: ["5433:5432"]
     volumes: [postgres-data:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vocal -d vocal_biomarkers"]
