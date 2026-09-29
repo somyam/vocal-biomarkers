@@ -13,11 +13,12 @@ Two deployables live under `apps/`:
 
 **`apps/web/` — the mobile app.** React + TypeScript, rendered inside a calibrated device-simulator runtime (apps/web/src/mobile/: iPhone and Pixel 10 frames, live status bar, on-screen keyboard). All app-specific screens and logic live in apps/web/src/Prototype.tsx and apps/web/src/prototype.css — everything else under apps/web/src/ is protected scaffold (see AGENTS.md).
 
-**`apps/api/` — FastAPI + Postgres, dockerized.** Streams live
-16kHz PCM audio over WebSocket, transcribes it locally (faster-whisper), and
-submits 30-second chunks with a 15 second hop to Amplifier's longitudinal
-Pulse endpoint (`POST /v2/models/pulse/groups/{group_id}/analyze/longitudinal`)
-so each reading is scored against that subject's own history. Results land in
+**`apps/api/` — FastAPI + Postgres, dockerized.** Accepts live
+16kHz PCM audio over WebSocket, transcribes it locally
+(faster-whisper), and submits 30-second chunks with a 15 second hop to
+Amplifier's longitudinal Pulse endpoint
+(`POST /v2/models/pulse/groups/{group_id}/analyze/longitudinal`) so each
+reading is scored against that subject's own history. Results land in
 Postgres.
 
 **`apps/web/public/presentation.html` — the mock demo.** A two-panel view (phone
@@ -38,7 +39,9 @@ npm run dev
 ```
 
 Open `http://localhost:5173/` for the two-panel demo view (phone + live trace
-panel), or `http://localhost:5173/?member=1` for just the bare app.
+panel), `http://localhost:5173/?member=1` for just the bare app, or
+`http://localhost:5173/?member=1&live=1` for the bare app wired to a real
+backend (requires the backend running — see below).
 
 **Backend (real check-in pipeline):**
 
@@ -54,6 +57,11 @@ Then point the frontend at it via `apps/web/.env` (see `apps/web/.env.example`):
 VITE_VOCAL_API_URL=http://127.0.0.1:8000
 VITE_VOCAL_API_TOKEN=development-token
 ```
+
+Then open `http://localhost:5173/?member=1&live=1` (see above) — the `live`
+flag is what switches Morning Check-in to this real mic + WebSocket + backend
+flow. Without it, the frontend always shows the scripted demo, even with the
+backend running.
 
 ## Other scripts
 
