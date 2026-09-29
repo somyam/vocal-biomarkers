@@ -1,10 +1,10 @@
 node_modules/
 dist/
 .env
-backend/.env
-backend/.venv/
-backend/__pycache__/
-backend/**/*.pyc
-backend/*.db
+apps/api/.env
+apps/api/.venv/
+apps/api/__pycache__/
+apps/api/**/*.pyc
+apps/api/*.db
 test-results/
 playwright-report/

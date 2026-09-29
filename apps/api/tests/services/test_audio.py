@@ -1,4 +1,4 @@
-from app.audio import AudioBucketer, pcm_to_wav
+from app.services.audio import AudioBucketer, pcm_to_wav
 
 
 def test_bucketer_emits_overlapping_windows_every_hop():

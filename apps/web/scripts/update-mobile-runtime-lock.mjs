@@ -8,7 +8,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const lockPath = path.join(root, "mobile-runtime.lock.json");
 const protectedFiles = [
   "scripts/check-mobile-runtime.mjs",
-  "scripts/prepare-sites-build.mjs",
   "scripts/update-mobile-runtime-lock.mjs",
   "vite.config.ts",
   "src/App.tsx",
@@ -34,7 +33,6 @@ const protectedFiles = [
   "public/assets/android/navigation-bar.svg",
   "public/assets/status/status-icons.svg",
   "public/assets/status/ios-status-icons.svg",
-  "worker/index.js",
 ];
 
 const hashes = {};

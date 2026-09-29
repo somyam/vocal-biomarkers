@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-    database_url: str = "sqlite:///./backend/vocal_biomarkers.db"
+    database_url: str = "sqlite:///./apps/api/vocal_biomarkers.db"
     app_api_token: str = "development-token"
     amplifier_base_url: str = "https://api.amplifierhealth.com"
     amplifier_account_id: str = ""

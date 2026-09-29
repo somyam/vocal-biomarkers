@@ -1,0 +1,354 @@
+# Production Readiness Review Prompt
+
+You are a Principal Software Architect, Staff Engineer, Security Reviewer, and SRE reviewing a production-grade FastAPI application.
+
+Your objective is to perform a complete production readiness review.
+
+Do not limit the review to syntax issues. Review the entire project from architecture to implementation and suggest improvements with reasoning.
+
+---
+
+## Project Context
+
+This application is a MuleSoft API migrated into Python FastAPI.
+
+### Application Characteristics
+- Enterprise APIs
+- High throughput
+- Low latency
+- Financial services grade
+- Production critical
+
+---
+
+## Review Areas
+
+Review everything. Do not skip any category.
+
+### 1. Architecture Review
+Review:
+- Layering
+- Separation of concerns
+- Dependency direction
+- Package structure
+- Modularity
+- Extensibility
+- Maintainability
+- Coupling
+- Cohesion
+
+Ensure the architecture follows:
+- Clean Architecture
+- Hexagonal Architecture where appropriate
+- SOLID
+- DRY
+- KISS
+- YAGNI
+
+Identify architectural smells.
+
+---
+
+### 2. FastAPI Best Practices
+Verify:
+- APIRouter usage
+- Dependency Injection
+- Lifespan events
+- Background tasks
+- Async usage
+- Response models
+- Request models
+- Validation
+- Middleware
+- Exception handlers
+- Dependency scopes
+- Startup/shutdown events
+
+Identify anti-patterns.
+
+---
+
+### 3. Python Best Practices
+Review:
+- Typing
+- Type hints
+- Dataclasses
+- Enums
+- Constants
+- Context managers
+- Generators
+- Async/await
+- Comprehensions
+- Code duplication
+
+Ensure the code is Pythonic.
+
+---
+
+### 4. Design Principles
+Verify:
+- SOLID
+- SRP
+- OCP
+- LSP
+- ISP
+- DIP
+
+Identify violations.
+
+---
+
+### 5. Design Patterns
+Identify opportunities to use:
+- Factory
+- Strategy
+- Adapter
+- Facade
+- Builder
+- Repository
+- Service Layer
+- Dependency Injection
+- Command
+- Chain of Responsibility
+- Decorator
+- Observer
+- Circuit Breaker
+- Retry
+- Bulkhead
+- Saga, if workflows exist
+
+---
+
+
+### 7. API Design Review
+Review:
+- REST conventions
+- HTTP methods
+- Status codes
+- Versioning
+- Pagination
+- Filtering
+- Sorting
+- OpenAPI
+- Swagger
+- Idempotency
+- Error responses
+- Problem Details
+- Consistency
+
+---
+
+### 8. Performance Review
+Review:
+- Blocking calls
+- Async issues
+- Database access
+- Connection pooling
+- Serialization
+- Large object allocations
+- Memory usage
+- CPU usage
+- Caching
+- Streaming
+- Compression
+- Batching
+- Timeouts
+- Retry
+- Circuit breaker
+- Thread safety
+
+Identify bottlenecks.
+
+---
+
+### 9. Logging Review
+Verify:
+- Structured logging
+- JSON logging
+- Correlation IDs
+- Trace IDs
+- Request IDs
+- PII masking
+- Log levels
+- Sensitive data
+- Application Insights integration
+
+---
+
+### 10. Exception Handling
+Review:
+- Global exception handlers
+- Business exceptions
+- Validation exceptions
+- HTTP exceptions
+- Retryable exceptions
+- Error consistency
+- Meaningful messages
+
+---
+
+### 11. Configuration Review
+Verify:
+- 12-factor app
+- Environment variables
+- Secrets
+- Configuration classes
+- No hardcoded values
+- Profiles
+- Feature flags
+
+---
+
+### 14. Reliability
+Review:
+- Retries
+- Backoff
+- Circuit breaker
+- Timeouts
+- Bulkheads
+- Fallback
+- Dead letter queues
+- Idempotency
+- Chaos resilience
+
+---
+
+### 15. Maintainability
+Review:
+- Naming
+- Code duplication
+- Long methods
+- Complexity
+- Magic numbers
+- Documentation
+- Comments
+- Folder organization
+- Dead code
+- Unused imports
+
+---
+
+### 16. Testing
+Review:
+- Unit testing
+- Integration testing
+- Contract testing
+- API testing
+- Coverage
+- Mocks
+- Fixtures
+- Edge cases
+- Negative tests
+- Boundary tests
+- Load testing
+
+---
+
+### 17. Code Quality
+Review against:
+- PEP 8
+- Black
+- isort
+- flake8
+- ruff
+- mypy
+- bandit
+- SonarQube
+- Cyclomatic complexity
+- Maintainability Index
+- Cognitive Complexity
+
+---
+
+### 18. Mule Migration Validation
+Ensure Mule behavior has been preserved.
+
+Validate:
+- Flows
+- Subflows
+- Choice routers
+- Error handlers
+- Transform Message
+- DataWeave mappings
+- Retry scopes
+- Until successful
+- Transactions
+- HTTP listeners
+- Object store
+- Caching
+- APIKit behavior
+- Policies
+- Security
+- Timeouts
+
+---
+
+
+### 20. Production Readiness
+Score each area:
+- Architecture
+- Security
+- Performance
+- Scalability
+- Maintainability
+- Observability
+- Reliability
+- Cloud Readiness
+- Operations
+- Testing
+- Documentation
+
+Provide:
+- Critical issues
+- High issues
+- Medium issues
+- Low issues
+
+---
+
+## Output Format
+
+Produce a report using the following format in MD format where ever possible include file path including line numbers:
+
+### Executive Summary
+- Overall Score
+- Production Readiness Score
+- Architecture Score
+- Security Score
+- Performance Score
+- Maintainability Score
+- Cloud Readiness Score
+- Testing Score
+- Observability Score
+- Reliability Score
+
+---
+
+### For Every Issue, Include
+- Severity
+  - Critical
+  - High
+  - Medium
+  - Low
+- Location
+- Reason
+- Recommended Fix
+- Example Code
+- Expected Benefit
+
+---
+
+### Finally Provide
+- Top 20 improvements
+- Quick wins
+- Refactoring opportunities
+- Architecture improvements
+- Security improvements
+- Performance improvements
+- Testing improvements
+- CI/CD improvements
+- Coding guideline violations
+- Best practice violations
+- Estimated technical debt
+- Estimated production risk
+- Estimated migration quality

@@ -12,7 +12,7 @@
 Pulse receives 30-second sliding window WAV segments with a 15 second stride, submitted to the group-aware longitudinal endpoint
 (`POST /v2/models/pulse/groups/{group_id}/analyze/longitudinal`) rather than a one-off
 score. `group_id` is derived per-user (`user-<user_id>`, see `pulse_group_id` in
-`app/amplifier.py`) — a longitudinal group represents exactly one subject, so groups are
+`app/services/amplifier.py`) — a longitudinal group represents exactly one subject, so groups are
 never shared across members.
 
 The FastAPI service accepts 16 kHz mono signed-16-bit PCM through an authenticated,

@@ -4,7 +4,7 @@ import secrets
 
 import httpx
 
-from .config import settings
+from ..core.config import settings
 
 
 TERMINAL = {"done", "failed", "timed-out"}

@@ -7,7 +7,7 @@ import asyncio
 import tempfile
 from functools import lru_cache
 
-from .config import settings
+from ..core.config import settings
 
 
 class Transcriber:

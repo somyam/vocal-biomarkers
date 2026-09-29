@@ -1,4 +1,4 @@
-from app.auth import consume_stream_ticket, mint_stream_ticket
+from app.core.auth import consume_stream_ticket, mint_stream_ticket
 
 
 def test_stream_ticket_is_scoped_and_one_use():
