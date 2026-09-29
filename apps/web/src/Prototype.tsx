@@ -839,7 +839,7 @@ function LiveBrainDumpRecorder({ onComplete, onViewData, onConversationReady, mi
   }
 
   function saveRecording(startConversation = false) {
-    if ((!recording && !paused) || elapsed < minimumSeconds || !checkinIdRef.current) return;
+    if ((!recording && !paused) || (!paused && elapsed < minimumSeconds) || !checkinIdRef.current) return;
     continueConversationRef.current = startConversation;
     if (recording) {
       recordedMsRef.current += Date.now() - startedAtRef.current;
@@ -915,7 +915,7 @@ function LiveBrainDumpRecorder({ onComplete, onViewData, onConversationReady, mi
       </footer>
       {error ? <span className="recording-error" role="alert">{error}</span> : null}
       <div className="recorder-actions">
-        {elapsed >= minimumSeconds && (recording || paused) ? <>
+        {(paused || (recording && elapsed >= minimumSeconds)) ? <>
           <button type="button" className="save-audio" onClick={() => saveRecording()} disabled={saved}>Save</button>
           <button type="button" className="stop-recording" onClick={() => saveRecording(true)}>Continue Conversation</button>
         </> : null}
