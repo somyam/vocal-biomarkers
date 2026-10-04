@@ -893,33 +893,49 @@ function LiveBrainDumpRecorder({ onComplete, onViewData, onConversationReady, mi
     );
   }
 
+  if (recording || paused) {
+    return (
+      <section className="brain-dump checkin-live" aria-label="Morning Check-in voice reflection">
+        <div className="conversation-screen live-transcript" aria-label="Live transcript">
+          <div className="conversation-messages">
+            <p className="coach-bubble">How are you feeling today?</p>
+            {partialTranscript ? (
+              <p className="member-bubble" aria-live="polite">{partialTranscript}</p>
+            ) : (
+              <p className="coach-typing" aria-live="polite">Listening<span>···</span></p>
+            )}
+          </div>
+        </div>
+        <div className="live-controls">
+          <button type="button" className={recording ? "microphone is-listening" : "microphone is-paused"} onClick={recording ? pauseRecording : resumeRecording} aria-pressed={recording} aria-label={recording ? "Pause Morning Check-in recording" : "Resume Morning Check-in recording"}>
+            {recording ? <PauseIcon width={20} height={20} /> : <PlayIcon width={20} height={20} />}
+          </button>
+          <strong className="recording-timer" aria-live="polite">{formattedTime}</strong>
+        </div>
+        {error ? <span className="recording-error" role="alert">{error}</span> : null}
+        <div className="recorder-actions">
+          {(paused || (recording && elapsed >= minimumSeconds)) ? (
+            <button type="button" className="save-audio" onClick={() => saveRecording()} disabled={saved}>Save</button>
+          ) : null}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="brain-dump" aria-label="Morning Check-in voice reflection">
-      <button type="button" className={recording ? "microphone is-listening" : paused ? "microphone is-paused" : "microphone"} onClick={recording ? pauseRecording : paused ? resumeRecording : startRecording} aria-pressed={recording} aria-label={recording ? "Pause Morning Check-in recording" : paused ? "Resume Morning Check-in recording" : "Start recording Morning Check-in"}>
-        {recording ? <PauseIcon width={35} height={35} /> : paused ? <PlayIcon width={35} height={35} /> : <MicrophoneIcon size={35} weight="regular" />}
+      <button type="button" className="microphone" onClick={startRecording} aria-label="Start recording Morning Check-in">
+        <MicrophoneIcon size={35} weight="regular" />
       </button>
-      {recording || paused ? <strong className="recording-timer" aria-live="polite">{formattedTime}</strong> : null}
-      {recording || paused ? (
-        <div className="transcript-box live-preview">
-          <p aria-live="polite">{partialTranscript || "Listening…"}</p>
-        </div>
-      ) : (
-        <div className="checkin-checklist" aria-label="Morning Check-in guidance">
-          <div><span className="checkin-checkmark"><CheckIcon width={14} height={14} /></span><span>Find a quiet space.</span></div>
-          <div><span className="checkin-checkmark"><CheckIcon width={14} height={14} /></span><span>Talk for at least 30 seconds.</span></div>
-          <div><span className="checkin-checkmark"><CheckIcon width={14} height={14} /></span><span>Tap the mic when you are ready.</span></div>
-        </div>
-      )}
+      <div className="checkin-checklist" aria-label="Morning Check-in guidance">
+        <div><span className="checkin-checkmark"><CheckIcon width={14} height={14} /></span><span>Find a quiet space.</span></div>
+        <div><span className="checkin-checkmark"><CheckIcon width={14} height={14} /></span><span>Talk for at least 30 seconds.</span></div>
+        <div><span className="checkin-checkmark"><CheckIcon width={14} height={14} /></span><span>Tap the mic when you are ready.</span></div>
+      </div>
       <footer className="checkin-footer">
         <p>Reminder set for 8:00 am · <span>Change</span></p>
       </footer>
       {error ? <span className="recording-error" role="alert">{error}</span> : null}
-      <div className="recorder-actions">
-        {(paused || (recording && elapsed >= minimumSeconds)) ? <>
-          <button type="button" className="save-audio" onClick={() => saveRecording()} disabled={saved}>Save</button>
-          <button type="button" className="stop-recording" onClick={() => saveRecording(true)}>Continue Conversation</button>
-        </> : null}
-      </div>
     </section>
   );
 }

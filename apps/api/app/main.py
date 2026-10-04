@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -12,6 +13,7 @@ from .api import checkins, interventions, signals, stream, webhooks
 from .core.config import settings
 from .core.database import Base, SessionLocal, engine
 from .models import Intervention, User, UserIntervention
+from .services.transcribe import transcriber
 
 DEFAULT_INTERVENTIONS = {
     "hydrate": "Drink a glass of water before coffee.",
@@ -45,6 +47,9 @@ def seed_prototype_data() -> None:
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
     seed_prototype_data()
+    # Fire-and-forget: pays Whisper's one-time first-inference cost now, off the
+    # request path, so it's not the first live check-in stream that eats it.
+    asyncio.create_task(asyncio.to_thread(transcriber().warm_up))
     yield
 
 

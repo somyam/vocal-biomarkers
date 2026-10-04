@@ -35,6 +35,17 @@ class Transcriber:
             return "[mock transcript]"
         return await asyncio.to_thread(self._run, wav_bytes)
 
+    def warm_up(self) -> None:
+        """Pays CTranslate2's first-inference cost (model construction plus a throwaway
+        transcribe call) up front, at process startup, instead of on whichever user's
+        check-in happens to be the first live stream to hit this process -- that first
+        call is otherwise ~10s slower than every one after it, regardless of clip length."""
+        if self.mock:
+            return
+        silence = b"\x00\x00" * 16_000  # 1s of silent 16kHz PCM, just to exercise the model
+        from .audio import pcm_to_wav
+        self._run(pcm_to_wav(silence))
+
 
 @lru_cache
 def transcriber() -> Transcriber:
