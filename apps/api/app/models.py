@@ -24,6 +24,7 @@ class CheckIn(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.user_id"), index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    recording_completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     duration_seconds: Mapped[float] = mapped_column(default=0.0)
     pulse_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -85,6 +86,31 @@ class AmplifierJob(Base):
     errors: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AnalysisWindow(Base):
+    """Durable submission/retry state; audio is released after a terminal outcome."""
+    __tablename__ = "analysis_windows"
+    __table_args__ = (UniqueConstraint("checkin_id", "index"),)
+    window_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    checkin_id: Mapped[str] = mapped_column(ForeignKey("checkins.checkin_id"), index=True)
+    index: Mapped[int]
+    start_seconds: Mapped[float]
+    end_seconds: Mapped[float]
+    audio_wav: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    attempts: Mapped[int] = mapped_column(default=0)
+    max_attempts: Mapped[int] = mapped_column(default=2)
+    status: Mapped[str] = mapped_column(String(24), default="queued")
+    current_job_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class WebhookInbox(Base):
+    __tablename__ = "amplifier_webhook_inbox"
+    job_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class CheckInSignal(Base):

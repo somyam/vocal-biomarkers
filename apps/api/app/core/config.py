@@ -12,11 +12,12 @@ class Settings(BaseSettings):
     amplifier_account_id: str = ""
     amplifier_api_key: str = ""
     amplifier_webhook_secret: str = ""
+    webhook_base_url: str = ""
     anthropic_api_key: str = Field(default="", validation_alias=AliasChoices("ANTHROPIC_API_KEY", "ANTHROPIC_API"))
     anthropic_model: str = "claude-sonnet-5-5"
     cors_origin: str = "http://127.0.0.1:4173"
     stream_ticket_ttl_seconds: int = 120
-    pulse_poll_seconds: float = 3.0
+    analysis_delay_seconds: float = 300.0
     pulse_max_attempts: int = 2
     # Upper bound on how long a check-in's WebSocket stays open waiting for its queued
     # chunks' real Amplifier round trips before giving up and emitting a timeout error.

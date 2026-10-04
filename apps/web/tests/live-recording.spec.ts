@@ -12,6 +12,8 @@ test.beforeEach(async ({ page }) => {
       controls: [] as string[],
       processors: [] as any[],
       socket: null as any,
+      eventSockets: [] as any[],
+      snapshot: null as any,
       failMicrophone: false,
     };
     (window as any).recorderTest = harness;
@@ -38,15 +40,24 @@ test.beforeEach(async ({ page }) => {
       readyState = 1;
       onopen: any;
       onmessage: any;
-      constructor() {
-        harness.socket = this;
-        setTimeout(() => this.onopen?.(), 0);
+      onclose: any;
+      constructor(url: string) {
+        if (String(url).includes('/events?')) {
+          harness.eventSockets.push(this);
+          setTimeout(() => {
+            this.onopen?.();
+            this.onmessage?.({ data: JSON.stringify({ type: 'checkin.snapshot', sequence: 0, checkin: harness.snapshot }) });
+          }, 0);
+        } else {
+          harness.socket = this;
+          setTimeout(() => this.onopen?.(), 0);
+        }
       }
       send(data: any) {
         if (typeof data === "string") harness.controls.push(JSON.parse(data).type);
         else harness.frames += 1;
       }
-      close() { this.readyState = 3; }
+      close() { this.readyState = 3; this.onclose?.(); }
     }
     (window as any).AudioContext = FakeAudioContext;
     (window as any).AudioWorkletNode = FakeWorklet;
@@ -150,7 +161,7 @@ test("Sonnet failures remain visible and End Turn can be retried", async ({ page
 });
 
 function savedPayload() {
-  return { checkin_id: 'test-checkin', completed_at: '2026-10-04T00:00:00' as string | null, transcript: 'Full transcript must not be repeated', conversation_messages: [
+  return { checkin_id: 'test-checkin', recording_completed_at: '2026-10-04T00:00:00' as string | null, analysis_status: 'complete', completed_at: '2026-10-04T00:00:00' as string | null, transcript: 'Full transcript must not be repeated', conversation_messages: [
     { id: 'opening', role: 'assistant', text: 'How are you feeling today?', status: 'done' },
     { id: 'voice-user', role: 'user', text: 'Spoken first turn', status: 'done' },
     { id: 'voice-reply', role: 'assistant', text: 'Voice reply', status: 'done' },
@@ -159,6 +170,10 @@ function savedPayload() {
 }
 
 async function saveConversation(page: import('@playwright/test').Page, payload: ReturnType<typeof savedPayload>) {
+  await page.route('**/v1/checkins/test-checkin/events-ticket', async route => {
+    await page.evaluate(value => { (window as any).recorderTest.snapshot = value; }, payload);
+    await route.fulfill({ json: { events_path: '/v1/checkins/test-checkin/events?ticket=fresh-ticket' } });
+  });
   await page.route('**/v1/checkins/test-checkin/finish', route => route.fulfill({ json: payload }));
   await page.route('**/v1/checkins/test-checkin', route => route.fulfill({ json: payload }));
   await page.evaluate(() => {
@@ -225,6 +240,8 @@ test('failed text sends preserve the draft and retry the same request ID', async
 test('pending save shows scrollable history and disables Send until completion', async ({ page }) => {
   const payload = savedPayload();
   payload.completed_at = null;
+  payload.recording_completed_at = null;
+  payload.analysis_status = "pending";
   payload.conversation_messages.push(...Array.from({ length: 30 }, (_, i) => ({ id: `history-${i}`, role: i % 2 ? 'assistant' : 'user', text: `Earlier message ${i}: this is a longer conversation to review.`, status: 'done' })));
   await saveConversation(page, payload);
   await expect(page.getByRole('textbox')).toBeDisabled();
@@ -233,6 +250,59 @@ test('pending save shows scrollable history and disables Send until completion',
   expect(await scroll.evaluate(node => node.scrollHeight > node.clientHeight && node.scrollTop > 0)).toBe(true);
   await scroll.evaluate(node => { node.scrollTop = 0; });
   await expect(page.getByText('How are you feeling today?', { exact: true })).toBeVisible();
-  payload.completed_at = '2026-10-04T00:00:00';
+  payload.recording_completed_at = '2026-10-04T00:00:00';
+  await pushSnapshot(page, payload, 1);
   await expect(page.getByRole('textbox')).toBeEnabled({ timeout: 5000 });
+});
+
+async function pushSnapshot(page: import('@playwright/test').Page, payload: ReturnType<typeof savedPayload>, sequence: number) {
+  await page.evaluate(({ payload, sequence }) => {
+    const h = (window as any).recorderTest;
+    h.snapshot = payload;
+    h.eventSockets.at(-1).onmessage({ data: JSON.stringify({ type: 'checkin.snapshot', sequence, checkin: payload }) });
+  }, { payload, sequence });
+}
+
+test('analysis arrives by notification; reconnect recovers missed events without polling or capture', async ({ page }) => {
+  const payload = savedPayload();
+  payload.completed_at = null;
+  payload.analysis_status = 'pending';
+  let gets = 0;
+  let tickets = 0;
+  page.on('request', request => {
+    if (request.url().endsWith('/v1/checkins/test-checkin') && request.method() === 'GET') gets++;
+    if (request.url().endsWith('/events-ticket')) tickets++;
+  });
+  await saveConversation(page, payload);
+  await expect(page.getByRole('textbox')).toBeEnabled();
+  await expect(page.getByText('Audio analysis pending', { exact: false })).toBeVisible();
+  await page.getByRole('textbox').fill('Keep draft during reconnect');
+  const initialTickets = tickets; // React StrictMode may abort the first effect request.
+  await page.waitForTimeout(3200);
+  expect(gets).toBe(0);
+  expect(tickets).toBe(initialTickets);
+  payload.analysis_status = 'complete';
+  payload.completed_at = '2026-10-04T00:00:00';
+  await page.evaluate(() => (window as any).recorderTest.eventSockets.at(-1).close());
+  await expect(page.getByText('Audio analysis complete', { exact: false })).toBeVisible();
+  await expect(page.getByRole('textbox')).toHaveValue('Keep draft during reconnect');
+  expect(tickets).toBe(initialTickets + 1);
+  expect(gets).toBe(0);
+  expect(await page.evaluate(() => (window as any).recorderTest.tracks.map((t: any) => t.readyState))).toEqual(['ended']);
+});
+
+test('Check analysis once is an explicit single request', async ({ page }) => {
+  const payload = savedPayload();
+  payload.completed_at = null;
+  payload.analysis_status = 'delayed';
+  let checks = 0;
+  await page.route('**/analysis/refresh', route => {
+    checks++;
+    return route.fulfill({ json: { ...payload, completed_at: '2026-10-04T00:00:00', analysis_status: 'complete' } });
+  });
+  await saveConversation(page, payload);
+  expect(checks).toBe(0);
+  await page.getByRole('button', { name: 'Check analysis once' }).click();
+  await expect(page.getByText('Audio analysis complete', { exact: false })).toBeVisible();
+  expect(checks).toBe(1);
 });

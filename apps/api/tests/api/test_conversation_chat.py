@@ -20,6 +20,7 @@ def saved_checkin():
     with TestClient(app) as client:
         checkin_id = client.post('/v1/checkins', headers=HEADERS).json()['checkin']['checkin_id']
     with SessionLocal() as db:
+        db.get(CheckIn, checkin_id).recording_completed_at = datetime.now()
         db.get(CheckIn, checkin_id).completed_at = datetime.now()
         db.add_all([
             ConversationTurn(checkin_id=checkin_id, start_sample=0, end_sample=16000,
@@ -120,3 +121,24 @@ async def test_concurrent_duplicate_requests_only_call_claude_once(saved_checkin
         results = await asyncio.gather(first, second)
         assert all(response.status_code == 200 for response in results)
         assert len(calls) == 1
+
+
+def test_restart_makes_interrupted_text_retryable_without_provider_call(saved_checkin, monkeypatch):
+    calls = []
+    async def reply(self, messages):
+        calls.append(messages)
+        return {'reply': 'Recovered after restart', 'model': 'test', 'raw_response': {}}
+    monkeypatch.setattr(SonnetClient, 'reply', reply)
+    request_id = str(uuid.uuid4())
+    with SessionLocal() as db:
+        db.add(ConversationTextTurn(request_id=request_id, checkin_id=saved_checkin, text='Keep this', status='processing'))
+        db.commit()
+    with TestClient(app) as client:
+        message = client.get(f'/v1/checkins/{saved_checkin}', headers=HEADERS).json()['conversation_messages'][-1]
+        assert message['text'] == 'Keep this' and message['status'] == 'failed'
+        assert 'restarted' in message['error']
+        assert calls == []
+        response = client.post(f'/v1/checkins/{saved_checkin}/messages', headers=HEADERS,
+                               json={'request_id': request_id, 'text': 'Keep this'})
+        assert response.status_code == 200
+        assert response.json()['conversation_messages'][-1]['status'] == 'done'

@@ -222,7 +222,7 @@ function CheckInTranscript({ transcript }: { transcript: string }) {
 }
 
 type SavedMessage = { id: string; role: "user" | "assistant"; text: string; status: string; error?: string | null; request_id?: string };
-type SavedCheckin = { checkin_id: string; completed_at: string | null; conversation_messages: SavedMessage[] };
+type SavedCheckin = { checkin_id: string; completed_at: string | null; recording_completed_at: string | null; analysis_status: "pending" | "complete" | "failed" | "delayed"; conversation_messages: SavedMessage[] };
 const liveApiBase = (import.meta.env.VITE_VOCAL_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 function liveHeaders() {
   return { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_VOCAL_API_TOKEN ?? "development-token"}` };
@@ -260,42 +260,109 @@ function SavedConversation({ checkinId }: { checkinId: string }) {
   const mounted = useRef(true);
   const keyboard = useKeyboard();
 
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const pendingRef = useRef(pending);
+  const revision = useRef(0);
+  pendingRef.current = pending;
+
   useEffect(() => {
     mounted.current = true;
     let cancelled = false;
+    let failures = 0;
+    let socket: WebSocket | undefined;
     let timer: ReturnType<typeof setTimeout>;
     const controller = new AbortController();
-    async function load() {
+    function reconnect() {
+      if (cancelled) return;
+      setConnectionError("Updates disconnected. Reconnecting…");
+      if (failures >= 5) {
+        setConnectionError("Updates disconnected. Reconnect to get the latest conversation.");
+        return;
+      }
+      timer = setTimeout(() => void connect(), Math.min(500 * 2 ** failures++, 8000));
+    }
+    async function connect() {
       try {
-        const response = await fetch(`${liveApiBase}/v1/checkins/${checkinId}`, { headers: liveHeaders(), signal: controller.signal });
-        if (!response.ok) throw new Error("Could not load the saved conversation.");
-        const payload = await response.json() as SavedCheckin;
+        const response = await fetch(`${liveApiBase}/v1/checkins/${checkinId}/events-ticket`, {
+          method: "POST", headers: liveHeaders(), signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Cannot connect");
+        const ticket = await response.json();
         if (cancelled) return;
-        // Never overwrite a newer send result with an older polling response.
-        if (!busy.current) {
+        const url = new URL(ticket.events_path, liveApiBase);
+        url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+        const current = new WebSocket(url.toString());
+        socket = current;
+        let sequence = -1;
+        current.onmessage = event => {
+          if (cancelled || socket !== current) return;
+          const message = JSON.parse(event.data);
+          if (message.type !== "checkin.snapshot" || message.sequence <= sequence) return;
+          sequence = message.sequence;
+          failures = 0;
+          revision.current++;
+          setConnectionError(null);
+          const payload = message.checkin as SavedCheckin;
+          const request = pendingRef.current;
+          // Keep a just-sent message visible if a snapshot predates its DB insert.
+          if (request && !payload.conversation_messages.some(item => item.request_id === request.request_id)) {
+            payload.conversation_messages = [...payload.conversation_messages, {
+              id: `${request.request_id}-user`, role: "user", text: request.text,
+              status: "processing", request_id: request.request_id,
+            }];
+          }
           setCheckin(payload);
-          const unfinished = payload.conversation_messages.find(message => message.request_id && message.status !== "done");
-          setPending(unfinished ? { request_id: unfinished.request_id!, text: unfinished.text } : null);
+          const unfinished = payload.conversation_messages.find(item => item.request_id && item.status !== "done");
+          const next = unfinished ? { request_id: unfinished.request_id!, text: unfinished.text } : null;
+          pendingRef.current = next;
+          setPending(next);
           setError(unfinished?.error ?? null);
-        }
-        if (!payload.completed_at || payload.conversation_messages.some(message => message.request_id && message.status === "processing")) {
-          timer = setTimeout(() => void load(), 1500);
-        }
+          if (request && !unfinished) setDraft("");
+        };
+        current.onclose = () => { if (socket === current) reconnect(); };
+        current.onerror = () => current.close();
       } catch {
-        if (!cancelled) setError("Could not load the saved conversation. Please retry.");
+        reconnect();
       }
     }
-    void load();
-    return () => { cancelled = true; mounted.current = false; controller.abort(); clearTimeout(timer); };
+    void connect();
+    return () => {
+      cancelled = true;
+      mounted.current = false;
+      controller.abort();
+      clearTimeout(timer);
+      socket?.close();
+    };
   }, [checkinId, reload]);
 
+  async function checkAnalysis() {
+    if (checking) return;
+    setChecking(true);
+    const version = revision.current;
+    try {
+      const response = await fetch(`${liveApiBase}/v1/checkins/${checkinId}/analysis/refresh`, { method: "POST", headers: liveHeaders() });
+      if (!response.ok) throw new Error("Unable to check analysis.");
+      const payload = await response.json();
+      if (!mounted.current) return;
+      if (version === revision.current) setCheckin(payload);
+      setError(payload.analysis_refresh_errors ? "Some results could not be checked. You can try again." : null);
+    } catch {
+      if (mounted.current) setError("Unable to check analysis. You can try again.");
+    } finally {
+      if (mounted.current) setChecking(false);
+    }
+  }
+
   async function send() {
-    if (busy.current || !checkin?.completed_at) return;
+    if (busy.current || !checkin?.recording_completed_at) return;
     const request = pending ?? { request_id: crypto.randomUUID(), text: draft.trim() };
     if (!request.text) return;
     busy.current = true;
     setWaiting(true);
+    pendingRef.current = request;
     setPending(request);
+    const version = revision.current;
     setError(null);
     keyboard.hide();
     setCheckin(current => current ? { ...current, conversation_messages: current.conversation_messages.some(message => message.request_id === request.request_id)
@@ -305,33 +372,44 @@ function SavedConversation({ checkinId }: { checkinId: string }) {
       if (!response.ok) throw new Error("Your message could not be sent. Please retry.");
       const payload = await response.json() as SavedCheckin;
       if (!mounted.current) return;
-      setCheckin(payload);
+      if (version === revision.current) setCheckin(payload);
       const turn = payload.conversation_messages.find(message => message.request_id === request.request_id);
       if (turn?.status !== "done") {
         setError(turn?.error || "The coach could not respond. Please retry.");
       } else {
+        pendingRef.current = null;
         setPending(null);
         setDraft("");
       }
     } catch {
-      if (mounted.current) setError("Your message could not be sent. Please retry.");
+      if (mounted.current) {
+        setError("Your message could not be sent. Please retry.");
+        setCheckin(current => current ? { ...current, conversation_messages: current.conversation_messages.map(message =>
+          message.request_id === request.request_id && message.status !== "done" ? { ...message, status: "failed" } : message) } : current);
+      }
     } finally {
       busy.current = false;
       if (mounted.current) setWaiting(false);
     }
   }
 
+  const processingMessage = checkin?.conversation_messages.some(message => message.request_id && message.status === "processing") ?? false;
+  const responding = waiting || processingMessage;
   return (
     <section className="conversation-screen saved-conversation" aria-label="Saved conversation">
-      {checkin ? <ConversationHistory messages={checkin.conversation_messages} waiting={waiting} /> : <p role="status">Loading conversation…</p>}
-      <p className="conversation-save-status" role="status">{checkin ? checkin.completed_at ? "Conversation saved" : "Saving conversation…" : ""}</p>
+      {checkin ? <ConversationHistory messages={checkin.conversation_messages} waiting={responding} /> : <p role="status">Loading conversation…</p>}
+      <p className="conversation-save-status" role="status">{checkin ? checkin.recording_completed_at ? "Conversation saved" : "Saving conversation…" : ""}</p>
       {error ? <p className="recording-error" role="alert">{error}</p> : null}
-      {!checkin && error ? <button type="button" className="save-audio" onClick={() => setReload(value => value + 1)}>Retry loading</button> : null}
+      {connectionError ? <p className="recording-error" role="status">{connectionError} <button type="button" onClick={() => setReload(value => value + 1)}>Reconnect</button></p> : null}
+      {checkin?.recording_completed_at ? <p className="conversation-save-status" role="status">
+        {checkin.analysis_status === "pending" ? "Audio analysis pending" : checkin.analysis_status === "delayed" ? "Audio analysis is taking longer than expected" : checkin.analysis_status === "failed" ? "Audio analysis failed" : "Audio analysis complete"}
+        {checkin.analysis_status === "pending" || checkin.analysis_status === "delayed" ? <> · <button type="button" disabled={checking} onClick={() => void checkAnalysis()}>{checking ? "Checking…" : "Check analysis once"}</button></> : null}
+      </p> : null}
       <form className="coach-composer" onSubmit={event => { event.preventDefault(); void send(); }}>
         <KeyboardInput value={pending?.text ?? draft} onChange={event => setDraft(event.target.value)} onBlur={() => keyboard.hide()}
           placeholder="Reply to your coach…" aria-label="Reply to your coach" maxLength={10000}
-          disabled={waiting || !!pending || !checkin?.completed_at} />
-        <button type="submit" onPointerDown={event => event.preventDefault()} disabled={waiting || !checkin?.completed_at || (!pending && !draft.trim())}>{pending && !waiting ? "Retry" : "Send"}</button>
+          disabled={responding || !!pending || !checkin?.recording_completed_at} />
+        <button type="submit" onPointerDown={event => event.preventDefault()} disabled={responding || !checkin?.recording_completed_at || (!pending && !draft.trim())}>{pending && !responding ? "Retry" : "Send"}</button>
       </form>
     </section>
   );

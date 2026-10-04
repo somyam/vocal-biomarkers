@@ -9,8 +9,10 @@ from sqlalchemy import select
 
 from ..core.auth import mint_stream_ticket, require_user
 from ..core.database import SessionLocal
-from ..models import CheckIn, ConversationTurn, Recording
+from ..models import AmplifierJob, CheckIn, ConversationTurn, Recording
 from ..services.streaming import streams
+from ..services.analysis import analysis_status, receive_result
+from ..services.amplifier import PulseClient, TERMINAL
 from ..services.conversation import conversation_messages, reply_to_text, text_turn_lock
 
 router = APIRouter(prefix="/v1/checkins", tags=["checkins"])
@@ -22,8 +24,10 @@ def checkin_payload(checkin: CheckIn) -> dict[str, Any]:
             ConversationTurn.checkin_id == checkin.checkin_id,
         ).order_by(ConversationTurn.end_sample)))
         messages = conversation_messages(db, checkin)
+        analysis = analysis_status(db, checkin.checkin_id)
     return {"checkin_id": checkin.checkin_id, "user_id": checkin.user_id,
         "started_at": checkin.started_at, "completed_at": checkin.completed_at,
+        "recording_completed_at": checkin.recording_completed_at, "analysis_status": analysis,
         "duration_seconds": checkin.duration_seconds, "pulse_json": checkin.pulse_json,
         "transcript": checkin.transcript,
         "conversation_messages": messages,
@@ -57,7 +61,7 @@ def create_checkin(user_id: str = Depends(require_user)) -> dict[str, Any]:
 @router.post("/{checkin_id}/finish")
 async def finish_checkin(checkin_id: str, user_id: str = Depends(require_user)) -> dict[str, Any]:
     checkin = require_owned_checkin(checkin_id, user_id)
-    if checkin.completed_at is None:
+    if checkin.recording_completed_at is None:
         await streams.finalize(checkin_id)
     return checkin_payload(require_owned_checkin(checkin_id, user_id))
 
@@ -82,7 +86,7 @@ class TextMessage(BaseModel):
 @router.post("/{checkin_id}/messages")
 async def send_message(checkin_id: str, body: TextMessage, user_id: str = Depends(require_user)) -> dict[str, Any]:
     checkin = require_owned_checkin(checkin_id, user_id)
-    if checkin.completed_at is None:
+    if checkin.recording_completed_at is None:
         raise HTTPException(409, "The recording is still being saved. Please wait.")
     async with text_turn_lock(checkin_id):
         await reply_to_text(checkin_id, str(body.request_id), body.text)
@@ -104,3 +108,31 @@ def get_recording(checkin_id: str, user_id: str = Depends(require_user)) -> Resp
         if recording is None:
             raise HTTPException(status_code=404, detail="Recording is not available")
         return Response(recording.audio_wav, media_type="audio/wav")
+
+
+@router.post("/{checkin_id}/analysis/refresh")
+async def refresh_analysis_once(checkin_id: str, user_id: str = Depends(require_user)):
+    from .webhooks import validate_job_payload
+    require_owned_checkin(checkin_id, user_id)
+    stream = streams.sessions.get(checkin_id)
+    if stream is not None and stream.paused:
+        raise HTTPException(409, "Resume or save before checking analysis.")
+    with SessionLocal() as db:
+        job_ids = list(db.scalars(select(AmplifierJob.job_id).where(
+            AmplifierJob.checkin_id == checkin_id, AmplifierJob.completed_at.is_(None))))
+    unavailable = 0
+    client = PulseClient()
+    for job_id in job_ids:
+        try:
+            if stream is not None:
+                await stream.wait_until_active()
+            payload = await client.get_result_once(job_id)
+            if payload.get('status') in TERMINAL:
+                if validate_job_payload(payload) != job_id:
+                    raise ValueError('Mismatched job ID')
+                await receive_result(job_id, payload)
+        except Exception:
+            # A recovery request failing does not make the provider job terminal.
+            unavailable += 1
+    payload = checkin_payload(require_owned_checkin(checkin_id, user_id))
+    return {**payload, 'analysis_refresh_errors': unavailable}

@@ -2,6 +2,7 @@
 import httpx
 
 from ..core.config import settings
+from .notifications import notifications
 
 
 class ConversationError(Exception):
@@ -69,6 +70,7 @@ async def process_conversation_turn(stream, start_sample: int, end_sample: int) 
             db.add(turn)
         turn.status, turn.error = "processing", None
         db.commit()
+        notifications.publish(stream.checkin_id)
         turn_id, transcript = turn.turn_id, turn.transcript
         earlier = list(db.scalars(select(ConversationTurn).where(
             ConversationTurn.checkin_id == stream.checkin_id,
@@ -91,6 +93,7 @@ async def process_conversation_turn(stream, start_sample: int, end_sample: int) 
         with SessionLocal() as db:
             db.get(ConversationTurn, turn_id).transcript = transcript
             db.commit()
+            notifications.publish(stream.checkin_id)
         await stream.emit("turn_transcript", turn_id=turn_id, text=transcript)
         messages.append({"role": "user", "content": transcript})
         response = await SonnetClient().reply(messages)
@@ -100,6 +103,7 @@ async def process_conversation_turn(stream, start_sample: int, end_sample: int) 
             turn.raw_response = response["raw_response"]
             turn.completed_at = datetime.now(timezone.utc)
             db.commit()
+            notifications.publish(stream.checkin_id)
         stream.turn_start_sample = end_sample
         await stream.emit("turn_result", turn_id=turn_id, transcript=transcript,
                           reply=response["reply"], model=response["model"],
@@ -110,6 +114,7 @@ async def process_conversation_turn(stream, start_sample: int, end_sample: int) 
             turn = db.get(ConversationTurn, turn_id)
             turn.status, turn.error = "failed", message
             db.commit()
+            notifications.publish(stream.checkin_id)
         await stream.emit("error", code="conversation_failed", turn_id=turn_id, message=message)
 
 
@@ -137,6 +142,7 @@ async def save_final_speech(stream) -> None:
             transcript = db.get(CheckIn, stream.checkin_id).transcript
         turn.start_sample, turn.status, turn.error = start, "processing", None
         db.commit()
+        notifications.publish(stream.checkin_id)
         turn_id = turn.turn_id
     error = None
     try:
@@ -152,6 +158,8 @@ async def save_final_speech(stream) -> None:
         turn.status = "transcription_failed" if error else "saved"
         turn.error, turn.completed_at = error, datetime.now(timezone.utc)
         db.commit()
+        notifications.publish(stream.checkin_id)
+
 
 
 def conversation_messages(db, checkin) -> list[dict]:
@@ -236,6 +244,7 @@ async def reply_to_text(checkin_id: str, request_id: str, text: str) -> None:
             db.add(turn)
         turn.status, turn.error = "processing", None
         db.commit()
+        notifications.publish(checkin_id)
     try:
         response = await SonnetClient().reply([*messages, {"role": "user", "content": text}])
         with SessionLocal() as db:
@@ -243,11 +252,27 @@ async def reply_to_text(checkin_id: str, request_id: str, text: str) -> None:
             turn.reply, turn.model, turn.raw_response = response["reply"], response["model"], response["raw_response"]
             turn.status, turn.completed_at = "done", datetime.now(timezone.utc)
             db.commit()
+            notifications.publish(checkin_id)
     except (Exception, asyncio.CancelledError) as exc:
         message = str(exc) if isinstance(exc, ConversationError) else "This message could not be processed. Please retry."
         with SessionLocal() as db:
             turn = db.get(ConversationTextTurn, request_id)
             turn.status, turn.error = "failed", message.replace("End Turn again", "again")
             db.commit()
+            notifications.publish(checkin_id)
         if isinstance(exc, asyncio.CancelledError):
             raise
+
+
+def recover_conversation_requests():
+    """Make interrupted text requests explicitly retryable; never call Claude on restart."""
+    from sqlalchemy import select
+    from ..core.database import SessionLocal
+    from ..models import ConversationTextTurn
+    with SessionLocal() as db:
+        rows = list(db.scalars(select(ConversationTextTurn).where(ConversationTextTurn.status == 'processing')))
+        for row in rows:
+            row.status, row.error = 'failed', 'The server restarted before this reply was saved. Please retry.'
+        db.commit()
+        for checkin_id in {row.checkin_id for row in rows}:
+            notifications.publish(checkin_id)

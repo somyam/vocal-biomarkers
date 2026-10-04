@@ -12,7 +12,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models import AmplifierJob, CheckIn, CheckInSignal, Recording, User
-from app.services import streaming
+from app.services import streaming, analysis
 from app.services.amplifier import PulseClient, pulse_group_id
 
 
@@ -57,18 +57,19 @@ class FakePulse:
             raise RuntimeError("upload unavailable")
         job_id = f"test-{uuid.uuid4()}"
         self.calls.append((group_id, wav_bytes, recorded_at, job_id))
-        return {"job_id": job_id, "status": "queued", "group_id": group_id, "recorded_at": recorded_at}
-
-    async def wait_for_result(self, job_id):
         if self.gate:
-            await self.gate.wait()
-        index = next(i for i, call in enumerate(self.calls) if call[3] == job_id)
-        outcome = self.outcomes[min(index, len(self.outcomes) - 1)]
-        if isinstance(outcome, Exception):
-            raise outcome
+            return {"job_id": job_id, "status": "queued"}
+        outcome = self.outcomes[min(len(self.calls) - 1, len(self.outcomes) - 1)]
         result = result_for(job_id, outcome)
         self.responses[job_id] = result
         return result
+
+
+async def drain_submissions():
+    # Await finite submission/retry work; this never contacts provider status APIs.
+    while analysis.submission_tasks:
+        await asyncio.gather(*list(analysis.submission_tasks.values()))
+        await asyncio.sleep(0)
 
 
 @pytest.fixture
@@ -98,6 +99,7 @@ async def record_and_save(stream, seconds):
     await stream.start()
     await stream.ingest(b"\0\0" * (16000 * seconds))
     await stream.finalize()
+    await drain_submissions()
 
 
 def test_real_amplifier_credentials_are_disabled():
@@ -112,7 +114,7 @@ def test_real_amplifier_credentials_are_disabled():
 ])
 async def test_save_persists_every_window_and_signal(stream, monkeypatch, seconds, windows):
     pulse = FakePulse()
-    monkeypatch.setattr(streaming, "PulseClient", lambda: pulse)
+    monkeypatch.setattr(analysis, "PulseClient", lambda: pulse)
     await record_and_save(stream, seconds)
     checkin, jobs, signals, recording = rows(stream)
     assert checkin.completed_at is not None
@@ -144,13 +146,14 @@ async def test_save_persists_every_window_and_signal(stream, monkeypatch, second
     assert all(e["path"] == f"/v2/models/pulse/groups/{pulse_group_id(stream.user_id)}/analyze/longitudinal" for e in trace)
     assert sum(e["type"] == "result" for e in stream.socket.events) == 1
     await stream.finalize()
+    await drain_submissions()
     assert len(pulse.calls) == len(windows)
 
 
 @pytest.mark.asyncio
 async def test_paused_audio_does_not_advance_windows(stream, monkeypatch):
     pulse = FakePulse()
-    monkeypatch.setattr(streaming, "PulseClient", lambda: pulse)
+    monkeypatch.setattr(analysis, "PulseClient", lambda: pulse)
     await stream.start()
     await stream.ingest(b"\0\0" * 16000 * 10)
     await stream.pause()
@@ -158,6 +161,7 @@ async def test_paused_audio_does_not_advance_windows(stream, monkeypatch):
     await stream.resume()
     await stream.ingest(b"\0\0" * 16000 * 5)
     await stream.finalize()
+    await drain_submissions()
     assert rows(stream)[0].duration_seconds == 15
     assert len(pulse.calls) == 1
 
@@ -167,11 +171,10 @@ async def test_paused_audio_does_not_advance_windows(stream, monkeypatch):
     (["failed", "done"], ["failed", "done"]),
     (["timed-out", "done"], ["timed-out", "done"]),
     (["failed", "failed"], ["failed", "failed"]),
-    ([RuntimeError("poll unavailable")], ["failed"]),
 ])
 async def test_failed_attempts_cannot_block_completion(stream, monkeypatch, outcomes, expected):
     pulse = FakePulse(outcomes)
-    monkeypatch.setattr(streaming, "PulseClient", lambda: pulse)
+    monkeypatch.setattr(analysis, "PulseClient", lambda: pulse)
     await record_and_save(stream, 15)
     checkin, jobs, signals, _ = rows(stream)
     assert checkin.completed_at is not None
@@ -180,13 +183,11 @@ async def test_failed_attempts_cannot_block_completion(stream, monkeypatch, outc
     assert all(j.errors is not None for j in jobs if j.status != "done")
     assert len(signals) == expected.count("done") * len(SIGNALS)
     assert {j.job_id for j in jobs} == {call[3] for call in pulse.calls}
-    if isinstance(outcomes[0], Exception):
-        assert jobs[0].raw_response["status"] == "queued"
 
 
 @pytest.mark.asyncio
 async def test_upload_failure_is_persisted_with_subject_metadata(stream, monkeypatch):
-    monkeypatch.setattr(streaming, "PulseClient", lambda: FakePulse(submit_error=True))
+    monkeypatch.setattr(analysis, "PulseClient", lambda: FakePulse(submit_error=True))
     await record_and_save(stream, 15)
     checkin, jobs, signals, _ = rows(stream)
     assert checkin.completed_at is not None
@@ -206,7 +207,7 @@ def add_job(stream, start=0):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_poll_and_webhook_insert_signals_once(stream):
+async def test_concurrent_recovery_and_webhook_insert_signals_once(stream):
     job_id = add_job(stream)
     barrier = threading.Barrier(2)
 
@@ -248,35 +249,35 @@ async def test_out_of_order_results_preserve_each_window(stream):
 
 
 @pytest.mark.asyncio
-async def test_timeout_keeps_jobs_alive_until_persisted(stream, monkeypatch):
-    gate = asyncio.Event()
-    pulse = FakePulse(gate=gate)
-    monkeypatch.setattr(streaming, "PulseClient", lambda: pulse)
-    monkeypatch.setattr(settings(), "finalize_timeout_seconds", 0.02)
+async def test_save_finishes_while_analysis_pending_then_webhook_completes(stream, monkeypatch):
+    pulse = FakePulse(gate=asyncio.Event())
+    monkeypatch.setattr(analysis, "PulseClient", lambda: pulse)
     await record_and_save(stream, 15)
-    assert rows(stream)[0].completed_at is None
-    assert stream.checkin_id in streaming.streams.sessions
-    assert any(e.get("code") == "processing_timeout" for e in stream.socket.events)
-    gate.set()
-    await asyncio.wait_for(stream.finalization_task, 2)
+    checkin, jobs, _, _ = rows(stream)
+    assert checkin.completed_at is None
+    assert checkin.recording_completed_at is not None
+    assert stream.checkin_id not in streaming.streams.sessions
+    assert not any(e.get("code") == "processing_timeout" for e in stream.socket.events)
+    await analysis.receive_result(jobs[0].job_id, result_for(jobs[0].job_id))
     assert rows(stream)[0].completed_at is not None
     assert len(rows(stream)[2]) == len(SIGNALS)
-    assert stream.checkin_id not in streaming.streams.sessions
 
 
 @pytest.mark.asyncio
 async def test_windows_are_submitted_and_persisted_before_save(stream, monkeypatch):
     pulse = FakePulse()
-    monkeypatch.setattr(streaming, "PulseClient", lambda: pulse)
+    monkeypatch.setattr(analysis, "PulseClient", lambda: pulse)
     await stream.start()
     for count in range(1, 4):
         await stream.ingest(b"\0\0" * 16000 * 15)
         await asyncio.gather(*stream.processing_tasks)
+        await drain_submissions()
         checkin, jobs, signals, recording = rows(stream)
         assert len(jobs) == count and len(signals) == count * len(SIGNALS)
         assert checkin.completed_at is None and recording is None
     await stream.ingest(b"\0\0" * 16000)
     await stream.finalize()
+    await drain_submissions()
     assert len(pulse.calls) == 3
     assert rows(stream)[0].duration_seconds == 46
 
@@ -285,7 +286,7 @@ async def test_windows_are_submitted_and_persisted_before_save(stream, monkeypat
 @pytest.mark.parametrize("finish_action", ["resume", "save"])
 async def test_pause_holds_queued_analysis_until_explicit_action(stream, monkeypatch, finish_action):
     pulse = FakePulse()
-    monkeypatch.setattr(streaming, "PulseClient", lambda: pulse)
+    monkeypatch.setattr(analysis, "PulseClient", lambda: pulse)
     await stream.start()
     await stream.ingest(b"\0\0" * 16000 * 15)
     await stream.pause()
@@ -295,8 +296,10 @@ async def test_pause_holds_queued_analysis_until_explicit_action(stream, monkeyp
     if finish_action == "resume":
         await stream.resume()
         await asyncio.gather(*stream.processing_tasks)
+        await drain_submissions()
         assert len(pulse.calls) == 1
     await stream.finalize()
+    await drain_submissions()
     assert len(pulse.calls) == 1
     assert rows(stream)[0].completed_at is not None
 
@@ -334,3 +337,69 @@ async def test_pause_cancels_partial_and_discards_late_transcript(stream, monkey
     await asyncio.gather(*stream.partial_tasks)
     assert any(e.get("text") == "fresh transcript" for e in stream.socket.events)
     await stream.finalize()
+    await drain_submissions()
+
+
+@pytest.mark.asyncio
+async def test_callback_before_submit_returns_is_reconciled(stream, monkeypatch):
+    class EarlyClient:
+        async def submit(self, group_id, wav_bytes, recorded_at):
+            job_id = str(uuid.uuid4())
+            assert not await analysis.receive_result(job_id, result_for(job_id))
+            return {'job_id': job_id, 'status': 'queued'}
+    monkeypatch.setattr(analysis, 'PulseClient', EarlyClient)
+    await record_and_save(stream, 15)
+    assert len(rows(stream)[2]) == len(SIGNALS)
+    assert rows(stream)[0].completed_at
+
+
+@pytest.mark.asyncio
+async def test_duplicate_failure_queues_one_retry_and_pause_keeps_it_pending(stream, monkeypatch):
+    from app.models import AnalysisWindow
+    pulse = FakePulse(gate=asyncio.Event())
+    monkeypatch.setattr(analysis, 'PulseClient', lambda: pulse)
+    await stream.start()
+    await stream.ingest(b'\0\0' * 16000 * 15)
+    await drain_submissions()
+    await stream.pause()
+    job_id = pulse.calls[0][3]
+    assert await analysis.receive_result(job_id, result_for(job_id, 'failed'))
+    assert not await analysis.receive_result(job_id, result_for(job_id, 'failed'))
+    await asyncio.sleep(0)
+    assert len(pulse.calls) == 1
+    with SessionLocal() as db:
+        window = db.scalar(select(AnalysisWindow).where(AnalysisWindow.checkin_id == stream.checkin_id))
+        assert window.status == 'queued' and window.attempts == 1
+        assert analysis.analysis_status(db, stream.checkin_id) == 'pending'
+    await stream.finalize()  # Save opens the pause gate but doesn't wait for analysis.
+    await drain_submissions()
+    assert len(pulse.calls) == 2
+    assert rows(stream)[0].recording_completed_at and not rows(stream)[0].completed_at
+    second = pulse.calls[1][3]
+    assert await analysis.receive_result(second, result_for(second, 'failed'))
+    await drain_submissions()
+    assert len(pulse.calls) == 2
+    assert rows(stream)[0].completed_at
+    with SessionLocal() as db:
+        assert analysis.analysis_status(db, stream.checkin_id) == 'failed'
+        assert db.get(AnalysisWindow, window.window_id).audio_wav is None
+
+
+@pytest.mark.asyncio
+async def test_startup_recovery_rearms_jobs_and_resumes_durable_queue(stream, monkeypatch):
+    from app.models import AnalysisWindow
+    pulse = FakePulse()
+    monkeypatch.setattr(analysis, 'PulseClient', lambda: pulse)
+    job = add_job(stream)
+    with SessionLocal() as db:
+        db.add(AnalysisWindow(checkin_id=stream.checkin_id, index=0, start_seconds=0, end_seconds=15,
+                              audio_wav=b'wav', status='queued'))
+        db.commit()
+    await analysis.recover_analysis()
+    await drain_submissions()
+    assert len(pulse.calls) == 1
+    assert 'job:' + job in analysis.deadlines
+    assert rows(stream)[0].completed_at is None
+    await analysis.receive_result(job, result_for(job))
+    await record_and_save(stream, 0)
+    assert rows(stream)[0].completed_at

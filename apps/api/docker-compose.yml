@@ -6,6 +6,17 @@ services:
     depends_on:
       db:
         condition: service_healthy
+  ngrok:
+    image: ngrok/ngrok:latest
+    profiles: [webhooks]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    command: ["http", "api:8000", "--url=${WEBHOOK_BASE_URL:-https://configure-ngrok.invalid}", "--config=/etc/ngrok.yml", "--traffic-policy-file=/etc/webhook-policy.yml"]
+    ports: ["127.0.0.1:4040:4040"]
+    volumes:
+      - ./ngrok.yml:/etc/ngrok.yml:ro
+      - ./ngrok-traffic-policy.yml:/etc/webhook-policy.yml:ro
+    depends_on: [api]
   db:
     image: postgres:16-alpine
     environment:

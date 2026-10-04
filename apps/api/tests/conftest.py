@@ -27,6 +27,9 @@ else:
 # Tests must never submit audio using credentials from the developer's .env.
 os.environ["AMPLIFIER_ACCOUNT_ID"] = ""
 os.environ["AMPLIFIER_API_KEY"] = ""
+os.environ["AMPLIFIER_WEBHOOK_SECRET"] = ""
+os.environ["WEBHOOK_BASE_URL"] = ""
+os.environ["NGROK_AUTHTOKEN"] = ""
 os.environ["ANTHROPIC_API_KEY"] = ""
 os.environ["ANTHROPIC_API"] = ""
 os.environ["APP_API_TOKEN"] = "development-token"

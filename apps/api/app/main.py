@@ -9,9 +9,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
-from .api import checkins, interventions, signals, stream, webhooks
+from .api import checkins, events, interventions, signals, stream, webhooks
 from .core.config import settings
 from .core.database import Base, SessionLocal, engine
+from .core.migrations import migrate_recording_completion
+from .services.analysis import recover_analysis, stop_analysis
+from .services.conversation import recover_conversation_requests
 from .models import Intervention, User, UserIntervention
 from .services.transcribe import transcriber
 
@@ -46,11 +49,17 @@ def seed_prototype_data() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    migrate_recording_completion(engine)
     seed_prototype_data()
+    recover_conversation_requests()
+    await recover_analysis()
     # Fire-and-forget: pays Whisper's one-time first-inference cost now, off the
     # request path, so it's not the first live check-in stream that eats it.
     asyncio.create_task(asyncio.to_thread(transcriber().warm_up))
-    yield
+    try:
+        yield
+    finally:
+        await stop_analysis()
 
 
 def create_app() -> FastAPI:
@@ -65,6 +74,7 @@ def create_app() -> FastAPI:
 
     app.include_router(checkins.router)
     app.include_router(stream.router)
+    app.include_router(events.router)
     app.include_router(interventions.router)
     app.include_router(signals.router)
     app.include_router(webhooks.router)

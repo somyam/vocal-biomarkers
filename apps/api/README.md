@@ -26,7 +26,8 @@ Pulse JSON payload, and a transcript of the recording to Postgres.
 
 ## Data model
 The backend has these postgres tables: `users`, `checkins`, `recordings`,
-`amplifier_jobs`, `checkin_signals`, `interventions`, and `user_interventions`. The latter
+`amplifier_jobs`, `analysis_windows`, `amplifier_webhook_inbox`, `checkin_signals`,
+`conversation_turns`, `conversation_text_turns`, `interventions`, and `user_interventions`. The latter
 records which interventions the private MVP user is currently doing. `checkin_signals`
 holds one row per returned signal per successful window (so the same signal can
 appear several times within one check-in), including the longitudinal fields
@@ -50,29 +51,105 @@ same check-in; permission failure leaves it paused. Captured-audio offsets conti
 from where recording stopped.
 
 The backend cancels pending live transcript previews and suppresses their late
-results. Every new AMPLIFIER upload, upload PUT, analyze request, retry, and job poll
+results. Every new AMPLIFIER upload, upload PUT, analyze request, and retry
 waits while paused. Requests already received by AMPLIFIER may finish remotely;
 pause cannot retract them. Save explicitly releases pending analysis work and runs
 final transcription on already captured audio, without reopening the microphone.
 
 ## Persistence and tracing
 
-Results are persisted as they arrive: `amplifier_jobs.raw_response` holds the full
-job response, and `checkin_signals` holds its individual readings. Job status and
-signals commit in one transaction; concurrent polling and webhook delivery cannot
-insert the same job's signals twice. Each failed attempt remains terminal even
-when another attempt is made. A polling error marks the original job failed and
-preserves its submission response and error details.
+Results are persisted as they arrive. `amplifier_jobs.raw_response` holds the full
+provider response, and `checkin_signals` holds every returned signal, including
+nullable longitudinal fields. A transactional terminal claim ensures concurrent
+webhook delivery and explicit recovery insert signals only once per job.
 
-Save writes the complete WAV to `recordings`. Once all window tasks and final
-transcription finish, `checkins` receives its duration, transcript, completion time,
-and collected job responses in `pulse_json`. The WebSocket wait timeout leaves
-processing running in the API process; it does not cancel accepted jobs. This is
-still an in-process prototype queue, not a durable worker across API restarts.
+`amplifier_webhook_inbox` durably retains the first valid terminal callback for a
+job ID, including callbacks arriving before submission registration. Registration
+and startup reconcile unapplied inbox entries. Duplicate callbacks are acknowledged
+without inserting signals or scheduling retries twice. Invalid signatures return
+401; invalid terminal payloads return 400; database failures return 5xx for retry.
 
-The `analyzing` and `job_result` WebSocket events include `start_seconds` and
-`end_seconds` alongside the chunk and job IDs. The live developer trace displays
-these offsets. No database schema changes are required.
+`analysis_windows` persists offsets, pending work, attempt counts, the current job
+ID, and temporary WAV bytes needed for bounded retries (two attempts by default).
+A failed result and its queued retry commit together; queued retries remain pending
+and respect the live pause gate. Terminal windows release their temporary audio.
+Upload/submission failures create terminal local-failure records. A restart during
+an uncertain submission marks it failed rather than blindly submitting again.
+Known accepted jobs remain pending for webhooks; queued retries resume on startup.
+
+Save writes the full WAV to `recordings`, transcribes the recording and final speech,
+and sets `recording_completed_at` and duration. Text chat becomes available then,
+without waiting for AMPLIFIER. `completed_at` still means recording finalization
+and all analysis work reached terminal outcomes. `pulse_json` collects job responses.
+Transcription failure remains visible in history and does not block chat indefinitely.
+
+`analysis_status` is `pending`, `complete`, `failed`, or `delayed`. A single deadline
+notification marks outstanding work delayed after five minutes; it makes no provider
+request. Late signed callbacks still apply. Missing callbacks never fabricate a
+terminal result. `POST /v1/checkins/{id}/analysis/refresh` checks each outstanding
+job once, only when explicitly requested, and returns a snapshot plus
+`analysis_refresh_errors`. It requires bearer auth/ownership and rejects paused
+recordings. A failed check leaves the job pending. No timer or reconnect calls it.
+
+Startup creates the additive tables and runs the idempotent
+`app/core/migrations.py` migration, adding nullable `checkins.recording_completed_at`
+and backfilling it from existing `completed_at` values. Existing records are retained.
+
+The `analyzing` and `job_result` audio WebSocket events include window offsets.
+Run **one API process/worker**: notification subscriptions, tickets, stream pause
+gates, and text locks are in memory. Postgres holds jobs and conversation history.
+Unsaved microphone buffers are not recoverable after an API restart.
+
+## Notifications
+
+- `POST /v1/checkins/{id}/events-ticket`: authenticated, ownership checked; returns
+  `events_path` with a short-lived, single-use ticket. Audio tickets cannot authorize it.
+- `WS /v1/checkins/{id}/events?ticket=...`: sends
+  `{"type":"checkin.snapshot","sequence":0,"checkin":{...}}`, then fresh snapshots
+  after committed recording, analysis, and conversation changes. Sequence numbers
+  increase per connection. The subscription is registered before the first snapshot;
+  one sender serializes delivery, and queued notifications coalesce into fresh reads.
+- The saved screen reconnects with a fresh ticket and bounded exponential backoff
+  (five consecutive failures, up to eight seconds), then offers manual Reconnect.
+  Reconnection recovers state from Postgres without microphone capture or message retries.
+  HTTP text submissions keep their original request IDs on explicit retry.
+
+There is no saved-screen refresh interval and no AMPLIFIER status polling loop.
+Local recording timers and Whisper preview scheduling remain unchanged.
+
+## Local webhook setup
+
+1. Create an [ngrok account](https://dashboard.ngrok.com/signup), copy its authtoken,
+   and obtain your static development domain from the ngrok dashboard.
+2. Set these values only in the ignored `apps/api/.env`:
+
+   ```dotenv
+   WEBHOOK_BASE_URL=https://your-static-domain.ngrok-free.app
+   NGROK_AUTHTOKEN=your-ngrok-authtoken
+   AMPLIFIER_WEBHOOK_SECRET=your-long-random-signing-secret
+   ```
+
+   Generate a signing secret with `python -c "import secrets; print(secrets.token_hex(32))"`.
+   Set AMPLIFIER account/API credentials as usual. Keep keys out of frontend env files.
+3. Run `docker compose --profile webhooks up --build -d` from this directory.
+   The optional ngrok service forwards to `api:8000`. Its inspector is bound on the
+   host only at `http://127.0.0.1:4040`.
+4. Record at least 15 seconds and Save. In the inspector, verify a signed
+   `POST /v1/webhooks/amplifier` callback and a 200 response. The saved screen should
+   receive the result without a history refresh request. Inspect jobs/signals in Postgres.
+   A public GET or any other public path must be denied by the traffic policy.
+
+Each longitudinal submission supplies `webhook_url` and `webhook_secret_key` using
+the existing audio-upload flow. The backend verifies hex HMAC-SHA256 in
+`X-Webhook-Signature` over the unmodified request body. Real submissions reject
+missing/invalid HTTPS webhook settings before uploading audio; they never silently
+switch to polling. With AMPLIFIER credentials absent, deterministic mock results
+work without ngrok. Stop only the tunnel with `docker compose --profile webhooks stop ngrok`.
+
+See ngrok's [agent configuration](https://ngrok.com/docs/gateway/agent/config/v3)
+and [deny traffic policy](https://ngrok.com/docs/gateway/traffic-policy/actions/deny).
+The committed policy allows only POST to the webhook path; app auth and signature
+verification remain the backend's responsibility.
 
 ## Tests
 
@@ -84,7 +161,8 @@ To verify Postgres transactions, set `TEST_POSTGRES_URL` to a test-capable Postg
 connection URL before running the same command. The suite creates a uniquely named
 schema, uses it exclusively, and drops it afterward; it does not modify public
 tables. Tests cover window boundaries, pause/resume, full recording persistence,
-signal fields, retries, duplicate concurrent delivery, rollback, and timeouts.
+signal fields, retries, duplicate concurrent delivery, rollback, early/late webhooks, notification
+authorization and connection races, bounded retries, deadlines, and explicit recovery.
 
 ## Sonnet conversation turns
 
@@ -158,7 +236,7 @@ Older recordings without per-turn rows fall back to the full saved transcript.
 ```
 
 This endpoint requires the existing bearer authentication, check-in ownership,
-and completed recording finalization. Text is trimmed and limited to 10,000
+and `recording_completed_at` (analysis may still be pending). Text is trimmed and limited to 10,000
 characters. It returns the updated check-in, including history. A provider failure
 returns the saved user message with status `failed` and a safe error; retry the
 same request ID and text. A completed duplicate returns the existing result.
@@ -170,7 +248,8 @@ text, reply, status, timestamps, model, error, and complete Claude response (inc
 cache usage). Startup creates this table without changing existing tables. Text
 messages are serialized per check-in with an async lock in the current single API
 process; use a durable queue/DB claim before scaling to multiple workers. Interrupted
-requests can be retried with their original request ID after a restart. A process
+requests are marked failed at startup and can be explicitly retried with their
+original request ID. Restart never automatically calls Claude. A process
 crash after Claude responds but before DB commit may cause a provider call on retry.
 
 Claude receives the successful voice exchanges, final saved speech, and completed

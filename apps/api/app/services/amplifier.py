@@ -1,6 +1,6 @@
-import asyncio
 import hmac
 import secrets
+from urllib.parse import urlparse
 
 import httpx
 
@@ -37,6 +37,7 @@ class PulseClient:
         orders this reading within that subject's history."""
         if not self.enabled:
             return {"job_id": f"mock-{secrets.token_hex(12)}", "status": "done", "result": {"summary": {"recommended_action": "inconclusive"}, "signals": [], "audio_quality": {"issues": []}, "extended_metrics": {}}}
+        webhook_url = self.validate_webhook()
         async with httpx.AsyncClient(timeout=60) as client:
             await self.wait_until_active()
             upload = (await client.post(f"{self.s.amplifier_base_url}/v2/audio/uploads", headers=self.headers, json={"content_type": "audio/wav"})).raise_for_status().json()
@@ -46,20 +47,25 @@ class PulseClient:
             response = await client.post(
                 f"{self.s.amplifier_base_url}/v2/models/pulse/groups/{group_id}/analyze/longitudinal",
                 headers=self.headers,
-                data={"audio_upload_ref": upload["upload_ref"], "diarize": "false", "recorded_at": recorded_at},
+                data={"audio_upload_ref": upload["upload_ref"], "diarize": "false", "recorded_at": recorded_at,
+                      "webhook_url": webhook_url, "webhook_secret_key": self.s.amplifier_webhook_secret},
             )
             return response.raise_for_status().json()
 
-    async def wait_for_result(self, job_id: str) -> dict:
-        if job_id.startswith("mock-"):
-            return {"job_id": job_id, "status": "done", "result": {"summary": {"recommended_action": "inconclusive"}, "signals": [], "audio_quality": {"issues": []}, "extended_metrics": {}}}
+    def validate_webhook(self) -> str:
+        url = urlparse(self.s.webhook_base_url)
+        if (url.scheme != "https" or not url.hostname or url.username or url.password
+                or url.query or url.fragment or url.path not in {"", "/"}
+                or url.hostname in {"localhost", "127.0.0.1", "::1"}
+                or not self.s.amplifier_webhook_secret):
+            raise ValueError("Real AMPLIFIER analysis requires an HTTPS WEBHOOK_BASE_URL and AMPLIFIER_WEBHOOK_SECRET.")
+        return self.s.webhook_base_url.rstrip("/") + "/v1/webhooks/amplifier"
+
+    async def get_result_once(self, job_id: str) -> dict:
+        """Only called by the explicit, authenticated recovery action; never scheduled."""
         async with httpx.AsyncClient(timeout=30) as client:
-            while True:
-                await self.wait_until_active()
-                payload = (await client.get(f"{self.s.amplifier_base_url}/v2/jobs/{job_id}", headers=self.headers)).raise_for_status().json()
-                if str(payload.get("status", "")).lower() in TERMINAL:
-                    return payload
-                await asyncio.sleep(self.s.pulse_poll_seconds)
+            response = await client.get(f"{self.s.amplifier_base_url}/v2/jobs/{job_id}", headers=self.headers)
+            return response.raise_for_status().json()
 
     @staticmethod
     def valid_signature(raw: bytes, signature: str | None) -> bool:
@@ -71,7 +77,7 @@ def valid_signature(raw: bytes, signature: str | None) -> bool:
     if not secret:
         return False
     expected = hmac.new(secret.encode(), raw, "sha256").hexdigest()
-    return bool(signature and hmac.compare_digest(expected, signature))
+    return bool(signature and signature.isascii() and hmac.compare_digest(expected, signature))
 
 
 def quality_view(result: dict | list[dict]) -> dict:

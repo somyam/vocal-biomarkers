@@ -51,7 +51,7 @@ Cross-file invariants that aren't visible from reading any single component:
 
 - User-approved behavior: submit microphone audio to AMPLIFIER every 15 seconds of captured audio, using the latest up to 30 seconds (0–15, 0–30, 15–45, 30–60, etc.). Paused time does not count.
 - Save persists the complete recording without an extra analysis submission. A 46-second recording produces exactly three scheduled submissions; recordings shorter than 15 seconds produce none.
-- Pause must release microphone tracks, block queued PCM and late transcript updates, and hold new AMPLIFIER upload/analyze/poll requests. Resume reacquires microphone access and continues the same check-in; Save permits finishing pending work without reopening the microphone.
+- Pause must release microphone tracks, block queued PCM and late transcript updates, and hold new AMPLIFIER upload/analyze requests and queued retries. Resume reacquires microphone access and continues the same check-in; Save permits finishing pending work without reopening the microphone.
 - Live recorder actions: “Save Conversation” finishes and saves the session; “End Turn” sits to its right, stops microphone capture, transcribes only the new turn, and sends it with prior turns to Anthropic Claude Sonnet using automatic prompt caching. Postgres retains the full turn history for replay; there is no OpenAI response-ID chain. Show the reply in the same conversation and keep the microphone paused until Resume. Anthropic credentials stay server-side.
 - Persist every successful window's returned signals and full job response to the existing Postgres tables; do not average the windows into one reading.
 
@@ -66,3 +66,20 @@ Run from `apps/api/`:
 - `docker compose up --build` — runs the API against Postgres at `http://127.0.0.1:8000`.
 - Without Docker: `python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && uvicorn app.main:app --reload`.
 - `pytest` — runs the test suite (`tests/api/`, `tests/services/`, `tests/core/`, mirroring `app/`).
+
+## Live processing and notifications
+
+- Keep the deployment single-process. Audio buffers, pause gates, notification subscribers,
+  single-use tickets, and text-turn locks are process-local; Postgres is authoritative.
+- AMPLIFIER completion arrives through signed webhooks. Never add automatic status polling
+  or saved-screen refresh intervals. The explicit `analysis/refresh` action is the only
+  provider-status GET path. Local microphone timers and transcription scheduling are allowed.
+- Publish notifications only after committed state changes. Subscribe before reading the
+  initial snapshot and use one socket sender. Webhook inbox application and result/signal
+  claims must remain transactional and idempotent; queued retries count as pending work.
+- `recording_completed_at` enables text chat; `completed_at` includes terminal analysis.
+  Saving and reconnecting notifications must never restart microphone capture.
+- The optional Compose `webhooks` profile runs ngrok with a POST-only webhook policy.
+  Keep its domain/token in ignored `.env` files and its inspector on host localhost.
+- Tests explicitly disable external credentials. Postgres tests use a unique temporary
+  schema through `TEST_POSTGRES_URL`; never run destructive tests on public tables.
