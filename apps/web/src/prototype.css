@@ -58,3 +58,22 @@
 .screen-content { display: flex; flex-direction: column; }
 .app-screen .mobile-scroll-content { min-height: 100%; }
 .add-habit { margin-top: auto; }
+
+.morning-checkin-overlay .recorder-actions .end-turn:disabled { opacity: .45; }
+.morning-checkin-overlay .recorder-actions { justify-content: center; width: 100%; }
+.morning-checkin-overlay .live-transcript { position: relative; }
+.morning-checkin-overlay .live-transcript > .conversation-messages { inset: 10px 0 0; display: block; overflow: hidden; }
+.morning-checkin-overlay .live-transcript .mobile-scroll-content { display: flex; flex-direction: column; gap: 9px; padding: 0 2px 8px; }
+.morning-checkin-overlay .checkin-live { min-height: 0; }
+
+.saved-conversation { overflow: hidden; }
+.saved-history { position: relative; flex: 1; min-height: 0; }
+.saved-history > .conversation-messages { inset: 0; display: block; overflow: hidden; padding: 0; }
+.saved-history .mobile-scroll-content { display: flex; flex-direction: column; gap: 9px; padding: 2px 2px 12px; }
+.saved-history .conversation-messages p { flex-shrink: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.conversation-save-status { flex-shrink: 0; margin: 0; color: #b8a18d; font-size: 12px; }
+.saved-conversation .coach-composer { flex-shrink: 0; }
+.saved-conversation .recording-error { margin: 0; font-size: 12px; }
+/* The saved view reserves keyboard space for both history and composer. */
+.saved-history .mobile-scroll { bottom: 0; }
+.saved-history .mobile-scrollbar { bottom: 4px; }

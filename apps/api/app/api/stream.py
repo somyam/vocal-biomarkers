@@ -48,6 +48,8 @@ async def stream_checkin(websocket: WebSocket, checkin_id: str, ticket: str) -> 
                 await session.pause()
             elif action == "checkin.resume":
                 await session.resume()
+            elif action == "checkin.turn.end":
+                await session.end_turn()
             elif action == "checkin.end":
                 await session.finalize()
                 break
@@ -56,5 +58,5 @@ async def stream_checkin(websocket: WebSocket, checkin_id: str, ticket: str) -> 
     except WebSocketDisconnect:
         pass
     finally:
-        if session.finalized:
+        if session.processing_complete:
             streams.remove(checkin_id)

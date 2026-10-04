@@ -9,13 +9,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import WebSocket
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ..core.config import settings
 from ..core.database import SessionLocal
 from ..models import AmplifierJob, CheckIn, CheckInSignal, Recording
-from .amplifier import PulseClient, pulse_group_id
+from .amplifier import TERMINAL, PulseClient, pulse_group_id
 from .audio import AudioBucketer, AudioChunk, pcm_to_wav
+from .conversation import process_conversation_turn
 from .transcribe import transcriber
 
 
@@ -32,6 +33,8 @@ class StreamSession:
     started: bool = False
     paused: bool = False
     finalized: bool = False
+    processing_complete: bool = False
+    finalization_task: asyncio.Task[None] | None = None
     processing_tasks: list[asyncio.Task[None]] = field(default_factory=list)
     # Live partial transcription: re-transcribes the whole clip so far on its own timer
     # (partial_transcript_interval_seconds), decoupled from Amplifier's hop cadence, kept
@@ -40,6 +43,10 @@ class StreamSession:
     transcribing_partial: bool = False
     partial_tasks: list[asyncio.Task[None]] = field(default_factory=list)
     partial_loop_task: asyncio.Task[None] | None = None
+    active_event: asyncio.Event = field(default_factory=asyncio.Event)
+    transcript_generation: int = 0
+    turn_start_sample: int = 0
+    turn_task: asyncio.Task[None] | None = None
 
     async def emit(self, event: str, **payload: Any) -> None:
         if self.socket is None:
@@ -51,17 +58,47 @@ class StreamSession:
 
     async def start(self) -> None:
         self.started, self.paused = True, False
+        self.active_event.set()
         await self.emit("recording", state="recording", elapsed_seconds=0)
         if self.partial_loop_task is None:
             self.partial_loop_task = asyncio.create_task(self._partial_transcript_loop())
 
     async def pause(self) -> None:
         self.paused = True
+        self.active_event.clear()
+        self.transcript_generation += 1
+        pending = [task for task in self.partial_tasks if not task.done()]
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        self.transcribing_partial = False
         await self.emit("recording", state="paused", elapsed_seconds=round(self.bucketer.seconds, 2))
 
     async def resume(self) -> None:
+        if self.turn_task is not None and not self.turn_task.done():
+            await self.emit("error", code="turn_in_progress", message="Please wait for the coach's reply before resuming.")
+            return
         self.paused = False
+        self.active_event.set()
         await self.emit("recording", state="recording", elapsed_seconds=round(self.bucketer.seconds, 2))
+
+    async def wait_until_active(self) -> None:
+        while self.paused:
+            await self.active_event.wait()
+
+    async def end_turn(self) -> None:
+        if self.finalized or not self.started:
+            await self.emit("error", code="conversation_failed", message="Start a recording before ending a turn.")
+            return
+        if self.turn_task is not None and not self.turn_task.done():
+            return
+        await self.pause()
+        end_sample = len(self.bucketer.buffer) // 2
+        if end_sample <= self.turn_start_sample:
+            await self.emit("error", code="conversation_failed", message="Resume speaking before ending another turn.")
+            return
+        self.turn_task = asyncio.create_task(process_conversation_turn(self, self.turn_start_sample, end_sample))
+        self.processing_tasks.append(self.turn_task)
 
     async def ingest(self, pcm: bytes) -> None:
         if not self.started or self.paused or self.finalized:
@@ -81,7 +118,7 @@ class StreamSession:
         # Skip if a previous pass hasn't finished -- the next timer tick's audio will
         # include this one anyway, so nothing is lost by waiting rather than stacking
         # concurrent Whisper calls on top of each other.
-        if self.transcribing_partial:
+        if self.transcribing_partial or self.paused or self.finalized:
             return
         self.transcribing_partial = True
         self.partial_tasks.append(asyncio.create_task(partial_transcribe(self)))
@@ -102,6 +139,12 @@ class StreamSession:
         if self.finalized:
             return
         self.finalized, self.paused = True, False
+        self.active_event.set()  # Save explicitly permits finishing previously queued work.
+        self.transcript_generation += 1
+        if self.partial_loop_task is not None:
+            self.partial_loop_task.cancel()
+        for task in self.partial_tasks:
+            task.cancel()
         for chunk in self.bucketer.flush():
             self._queue_pulse_job(chunk)
         wav = pcm_to_wav(bytes(self.bucketer.buffer), self.bucketer.sample_rate)
@@ -116,33 +159,26 @@ class StreamSession:
         # via the same wait/timeout below.
         self.processing_tasks.append(asyncio.create_task(transcribe_checkin(self.checkin_id, wav, self)))
         await self.emit("processing", elapsed_seconds=round(self.bucketer.seconds, 2))
-        # Keep the socket open until every queued chunk's real Amplifier round trip and the
-        # transcription both land. The bug was that the handler used to return (and so
-        # close the socket) right after queuing these as fire-and-forget tasks, long
-        # before a real analyze call could finish, silently dropping the eventual
-        # "result"/"error". processing_tasks is never empty here -- the transcription task
-        # above is always queued, even for a check-in with no Amplifier chunks at all.
+        # A socket timeout must not cancel accepted jobs or the final transcript.
+        # Keep ownership of the background task until all persistence is finished.
+        self.finalization_task = asyncio.create_task(self._finish_processing())
         try:
             await asyncio.wait_for(
-                asyncio.gather(*self.processing_tasks, return_exceptions=True),
+                asyncio.shield(self.finalization_task),
                 timeout=settings().finalize_timeout_seconds,
             )
         except asyncio.TimeoutError:
-            # wait_for cancels whatever's still running on timeout; a cancelled Amplifier
-            # job may still complete later via webhook (apply_job_result is idempotent
-            # either way), but this connection isn't waiting any longer for any of it.
             await self.emit("error", code="processing_timeout",
                 message="Your check-in is taking longer than expected to process. "
                         "Check back shortly for the result.")
-            return
-        # A chunk queued during `ingest()` can finish (and call refresh_checkin) before
-        # this point ever creates the Recording row above — most likely when analysis
-        # resolves near-instantly (offline/mock mode), unlikely but possible for a very
-        # fast real one. Its own refresh_checkin call finds `recording is None` and no-ops
-        # by design (not ready yet), so nothing else re-triggers it once the row exists.
-        # refresh_checkin is idempotent, so re-running it here — after every task this
-        # check-in queued is confirmed done — closes that race unconditionally.
+
+    async def _finish_processing(self) -> None:
+        await asyncio.gather(*self.processing_tasks, return_exceptions=True)
+        from .conversation import save_final_speech
+        await save_final_speech(self)
+        self.processing_complete = True
         await refresh_checkin(self.checkin_id, self)
+        streams.remove(self.checkin_id)
 
 
 async def process_chunk(checkin_id: str, chunk: AudioChunk, stream: StreamSession | None = None) -> None:
@@ -157,40 +193,60 @@ async def process_chunk(checkin_id: str, chunk: AudioChunk, stream: StreamSessio
     group_id = pulse_group_id(user_id)
     recorded_at_str = recorded_at.isoformat(timespec="seconds") + "Z"
     client = PulseClient()
+    if stream:
+        client.wait_until_active = stream.wait_until_active
     # The real endpoint being called, group_id baked in -- shown verbatim in the
     # "analyzing" event below rather than a generic placeholder, so "behind the
     # scenes" shows the actual request, not a stylized description of one.
     endpoint = f"/v2/models/pulse/groups/{group_id}/analyze/longitudinal"
+    job_id: str | None = None
     try:
-        for attempt in range(client.s.pulse_max_attempts):
+        for attempt in range(max(1, client.s.pulse_max_attempts)):
+            job_id = None
+            if stream:
+                await stream.wait_until_active()
             submission = await client.submit(group_id, chunk.wav_bytes, recorded_at_str)
             job_id = str(submission.get("job_id") or submission.get("id") or uuid.uuid4())
-            if stream:
-                await stream.emit("analyzing", chunk=chunk.index, job_id=job_id, method="POST", path=endpoint)
             with SessionLocal() as db:
                 db.add(AmplifierJob(job_id=job_id, checkin_id=checkin_id, group_id=group_id,
-                    recorded_at=recorded_at, status=str(submission.get("status", "queued")),
+                    recorded_at=recorded_at, status=str(submission.get("status", "queued")).lower(),
                     raw_response=submission))
                 db.commit()
-            result = submission if submission.get("status") == "done" else await client.wait_for_result(job_id)
-            if str(result.get("status", "")).lower() in {"failed", "timed-out"} and attempt + 1 < client.s.pulse_max_attempts:
-                with SessionLocal() as db:
-                    job = db.get(AmplifierJob, job_id)
-                    if job:
-                        job.status, job.raw_response, job.errors, job.completed_at = "retrying", result, result, now()
-                        db.commit()
-                continue
+            if stream:
+                await stream.emit("analyzing", chunk=chunk.index, job_id=job_id, method="POST", path=endpoint,
+                    start_seconds=chunk.start_seconds, end_seconds=chunk.end_seconds)
+            if stream:
+                await stream.wait_until_active()
+            result = submission if str(submission.get("status", "")).lower() in TERMINAL else await client.wait_for_result(job_id)
+            status = str(result.get("status", "")).lower()
+            if status not in TERMINAL:
+                raise ValueError("AMPLIFIER returned a nonterminal result")
+            # Every attempt remains terminal, including attempts that will be retried.
+            # A 'retrying' row would otherwise block check-in completion forever.
             await apply_job_result(job_id, result, stream)
-            if stream and str(result.get("status", "")).lower() == "done":
+            if status in {"failed", "timed-out"}:
+                if attempt + 1 < client.s.pulse_max_attempts:
+                    continue
+                if stream:
+                    await stream.emit("error", code="pulse_processing_failed", message="We could not analyze this audio.")
+            elif stream:
                 signals = (result.get("result") or {}).get("signals") or []
                 await stream.emit("job_result", chunk=chunk.index, job_id=job_id,
+                    start_seconds=chunk.start_seconds, end_seconds=chunk.end_seconds,
                     signals=[{"name": s.get("name"), "level": s.get("level")} for s in signals])
             return
     except Exception as exc:
-        job_id = f"local-failure-{uuid.uuid4()}"
         with SessionLocal() as db:
-            db.add(AmplifierJob(job_id=job_id, checkin_id=checkin_id, status="failed",
-                errors={"message": str(exc)}, completed_at=now()))
+            if job_id is not None:
+                # Preserve the accepted submission and mark that same row failed,
+                # unless a concurrent webhook has already completed it.
+                db.execute(update(AmplifierJob).where(
+                    AmplifierJob.job_id == job_id, AmplifierJob.completed_at.is_(None),
+                ).values(status="failed", errors={"message": str(exc)}, completed_at=now()))
+            else:
+                db.add(AmplifierJob(job_id=f"local-failure-{uuid.uuid4()}", checkin_id=checkin_id,
+                    group_id=group_id, recorded_at=recorded_at, status="failed",
+                    errors={"message": str(exc)}, completed_at=now()))
             db.commit()
         if stream:
             await stream.emit("error", code="pulse_processing_failed", message="We could not analyze this audio.")
@@ -202,10 +258,13 @@ async def partial_transcribe(stream: StreamSession) -> None:
     it as `transcript_partial`. Never touches the database and never blocks on failure --
     the single authoritative pass in `transcribe_checkin` at `checkin.end` is what actually
     gets persisted to `checkin.transcript`."""
+    generation = stream.transcript_generation
     try:
-        wav = pcm_to_wav(bytes(stream.bucketer.buffer), stream.bucketer.sample_rate)
+        if stream.paused or stream.finalized:
+            return
+        wav = pcm_to_wav(bytes(stream.bucketer.buffer[stream.turn_start_sample * 2:]), stream.bucketer.sample_rate)
         text = await transcriber().transcribe(wav)
-        if text:
+        if text and not stream.paused and not stream.finalized and generation == stream.transcript_generation:
             await stream.emit("transcript_partial", text=text)
     except Exception:
         pass
@@ -241,23 +300,29 @@ async def transcribe_checkin(checkin_id: str, wav_bytes: bytes, stream: StreamSe
 
 
 async def apply_job_result(job_id: str, result: dict[str, Any], stream: StreamSession | None = None) -> bool:
+    status = str(result.get("status", "")).lower()
+    if status not in TERMINAL:
+        return False
     with SessionLocal() as db:
-        job = db.get(AmplifierJob, job_id)
-        if job is None or job.completed_at is not None:
-            return False  # already applied — guards the poll path and the webhook racing each other
-        job.status = str(result.get("status", "done"))
-        job.raw_response = result
-        job.errors = None if job.status == "done" else result
-        job.completed_at = now()
-        checkin_id = job.checkin_id
+        # Atomically claim a terminal result. PostgreSQL serializes competing
+        # updates and rechecks completed_at after the winner commits. The claim
+        # and all signal inserts commit together, or roll back together.
+        claimed = db.execute(update(AmplifierJob).where(
+            AmplifierJob.job_id == job_id, AmplifierJob.completed_at.is_(None),
+        ).values(status=status, raw_response=result,
+            errors=None if status == "done" else result, completed_at=now()
+        ).returning(AmplifierJob.checkin_id, AmplifierJob.recorded_at)).first()
+        if claimed is None:
+            return False
+        checkin_id, recorded_at = claimed
         checkin = db.get(CheckIn, checkin_id)
-        if job.status == "done" and checkin is not None:
+        if status == "done" and checkin is not None:
             payload = result.get("result") or {}
             for signal in payload.get("signals") or []:
                 db.add(CheckInSignal(
                     checkin_id=checkin_id, user_id=checkin.user_id,
                     signal_name=str(signal.get("name", "")),
-                    recorded_at=job.recorded_at or now(),
+                    recorded_at=recorded_at or now(),
                     score=float(signal.get("score") or 0.0),
                     level=str(signal.get("level", "")),
                     flagged=bool(signal.get("flagged", False)),
@@ -274,14 +339,16 @@ async def apply_job_result(job_id: str, result: dict[str, Any], stream: StreamSe
 
 
 async def refresh_checkin(checkin_id: str, stream: StreamSession | None = None) -> None:
-    if stream is not None and not stream.finalized:
+    stream = stream or streams.sessions.get(checkin_id)
+    if stream is not None and not stream.processing_complete:
         return
     with SessionLocal() as db:
         checkin = db.get(CheckIn, checkin_id)
         if checkin is not None and checkin.completed_at is not None:
             return  # already finalized by an earlier call — avoid recomputing / re-emitting "result"
         recording = db.scalar(select(Recording).where(Recording.checkin_id == checkin_id))
-        jobs = list(db.scalars(select(AmplifierJob).where(AmplifierJob.checkin_id == checkin_id)))
+        jobs = list(db.scalars(select(AmplifierJob).where(AmplifierJob.checkin_id == checkin_id)
+            .order_by(AmplifierJob.recorded_at, AmplifierJob.created_at, AmplifierJob.job_id)))
         if checkin is None or recording is None or checkin.transcribed_at is None:
             return  # not ready: recording not written yet, or the transcription
             # attempt (success or failure) hasn't finished. `jobs` may legitimately be

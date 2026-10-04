@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -43,6 +43,37 @@ class Recording(Base):
     recorded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class ConversationTurn(Base):
+    __tablename__ = "conversation_turns"
+    __table_args__ = (UniqueConstraint("checkin_id", "end_sample"),)
+    turn_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    checkin_id: Mapped[str] = mapped_column(ForeignKey("checkins.checkin_id"), index=True)
+    start_sample: Mapped[int]
+    end_sample: Mapped[int]
+    transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reply: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="processing")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ConversationTextTurn(Base):
+    __tablename__ = "conversation_text_turns"
+    request_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    checkin_id: Mapped[str] = mapped_column(ForeignKey("checkins.checkin_id"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    reply: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="processing")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    raw_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class AmplifierJob(Base):
     __tablename__ = "amplifier_jobs"
     job_id: Mapped[str] = mapped_column(String(128), primary_key=True)
@@ -57,8 +88,8 @@ class AmplifierJob(Base):
 
 
 class CheckInSignal(Base):
-    """One row per Amplifier signal per check-in, keyed to the longitudinal group the
-    check-in was scored against. `baseline_score`, `deviation_from_baseline`, `anomaly`,
+    """One row per returned signal per successful window. A check-in can contain
+    several readings of the same signal; full job responses live in amplifier_jobs. `baseline_score`, `deviation_from_baseline`, `anomaly`,
     `z_score`, and `population_z` are `null` until that subject's group has an established
     baseline (Amplifier's own minimum: three spaced readings) — gate any display or
     analysis on `baseline_score is not None`, not on a locally tracked count."""

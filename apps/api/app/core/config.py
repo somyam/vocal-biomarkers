@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +12,8 @@ class Settings(BaseSettings):
     amplifier_account_id: str = ""
     amplifier_api_key: str = ""
     amplifier_webhook_secret: str = ""
+    anthropic_api_key: str = Field(default="", validation_alias=AliasChoices("ANTHROPIC_API_KEY", "ANTHROPIC_API"))
+    anthropic_model: str = "claude-sonnet-5-5"
     cors_origin: str = "http://127.0.0.1:4173"
     stream_ticket_ttl_seconds: int = 120
     pulse_poll_seconds: float = 3.0

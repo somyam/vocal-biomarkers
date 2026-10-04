@@ -47,6 +47,16 @@ Cross-file invariants that aren't visible from reading any single component:
 - **Drag vs. tap**: don't fire buttons/inputs once a pointer has become a drag, and don't allow native image/file drag inside the phone frame — both suppressions live in `MobileScroll`/phone-level handlers; preserve them rather than special-casing new interactive elements.
 - Record durable, user-approved prototype design decisions in this file so they survive across sessions.
 
+## Live check-in analysis cadence
+
+- User-approved behavior: submit microphone audio to AMPLIFIER every 15 seconds of captured audio, using the latest up to 30 seconds (0–15, 0–30, 15–45, 30–60, etc.). Paused time does not count.
+- Save persists the complete recording without an extra analysis submission. A 46-second recording produces exactly three scheduled submissions; recordings shorter than 15 seconds produce none.
+- Pause must release microphone tracks, block queued PCM and late transcript updates, and hold new AMPLIFIER upload/analyze/poll requests. Resume reacquires microphone access and continues the same check-in; Save permits finishing pending work without reopening the microphone.
+- Live recorder actions: “Save Conversation” finishes and saves the session; “End Turn” sits to its right, stops microphone capture, transcribes only the new turn, and sends it with prior turns to Anthropic Claude Sonnet using automatic prompt caching. Postgres retains the full turn history for replay; there is no OpenAI response-ID chain. Show the reply in the same conversation and keep the microphone paused until Resume. Anthropic credentials stay server-side.
+- Persist every successful window's returned signals and full job response to the existing Postgres tables; do not average the windows into one reading.
+
+- Saving a live conversation shows the complete persisted voice/Claude history and a text composer in the same overlay. Continue via real Claude text requests with prompt caching, automatically saving messages; never restart microphone capture. Retain the saved check-in ID in parent state for reopening in the current page. Include final unsent speech once, without generating a reply on Save. Keep the scripted demo separate.
+
 ## apps/api/ — Commands
 
 Setup (once): `cd apps/api && cp .env.example .env` (set `APP_API_TOKEN`; Amplifier keys optional — falls back to a mock).

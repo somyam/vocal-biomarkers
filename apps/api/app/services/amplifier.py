@@ -21,6 +21,9 @@ class PulseClient:
         self.s = settings()
         self.headers = {"X-Account-ID": self.s.amplifier_account_id, "X-API-Key": self.s.amplifier_api_key}
 
+    async def wait_until_active(self) -> None:
+        """Replaced by the stream's pause gate for live check-ins."""
+
     @property
     def enabled(self) -> bool:
         return bool(self.s.amplifier_account_id and self.s.amplifier_api_key)
@@ -35,8 +38,11 @@ class PulseClient:
         if not self.enabled:
             return {"job_id": f"mock-{secrets.token_hex(12)}", "status": "done", "result": {"summary": {"recommended_action": "inconclusive"}, "signals": [], "audio_quality": {"issues": []}, "extended_metrics": {}}}
         async with httpx.AsyncClient(timeout=60) as client:
+            await self.wait_until_active()
             upload = (await client.post(f"{self.s.amplifier_base_url}/v2/audio/uploads", headers=self.headers, json={"content_type": "audio/wav"})).raise_for_status().json()
+            await self.wait_until_active()
             (await client.put(upload["upload_url"], content=wav_bytes, headers=upload.get("required_headers", {}))).raise_for_status()
+            await self.wait_until_active()
             response = await client.post(
                 f"{self.s.amplifier_base_url}/v2/models/pulse/groups/{group_id}/analyze/longitudinal",
                 headers=self.headers,
@@ -49,6 +55,7 @@ class PulseClient:
             return {"job_id": job_id, "status": "done", "result": {"summary": {"recommended_action": "inconclusive"}, "signals": [], "audio_quality": {"issues": []}, "extended_metrics": {}}}
         async with httpx.AsyncClient(timeout=30) as client:
             while True:
+                await self.wait_until_active()
                 payload = (await client.get(f"{self.s.amplifier_base_url}/v2/jobs/{job_id}", headers=self.headers)).raise_for_status().json()
                 if str(payload.get("status", "")).lower() in TERMINAL:
                     return payload

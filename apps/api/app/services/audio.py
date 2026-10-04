@@ -42,28 +42,14 @@ class AudioBucketer:
     total audio -- 15s by default, exactly Amplifier's own documented floor --
     rather than needing a full 30s before anything gets scored at all.
 
-    `flush()` uses two separate thresholds, not one. The loop invariant above
-    guarantees "audio since the last emitted window" is always strictly less
-    than `hop_seconds` -- so a single threshold set >= hop_seconds (as
-    clinical_agent's own `min_s == hop_s` config does) can never be cleared,
-    ever, regardless of how much audio actually exists; that flush() path is
-    silently dead code there, just never noticed because clinical visits are
-    long enough that the tail rarely matters. It matters a lot for a short
-    check-in, so: `min_tail_seconds` gates the case where no window has fired
-    yet at all (the whole clip has to clear Amplifier's real floor on its own
-    -- there's no audio to borrow from a previous window); `min_new_tail_seconds`
-    gates the case where at least one window already fired (a final window
-    would mostly re-score audio already read, so only bother if the genuinely
-    new part is still meaningful)."""
+    Save preserves the complete recording but submits no off-cadence window.
+    Only scheduled hop boundaries produce analysis jobs.
+    """
     def __init__(self, sample_rate: int = 16000, window_seconds: float = 30.0,
-                 hop_seconds: float = 15.0, min_tail_seconds: float = 16.0,
-                 min_new_tail_seconds: float | None = None,
-                 minimum_tail_seconds: float | None = None):
+                 hop_seconds: float = 15.0):
         self.sample_rate = sample_rate
         self.window_seconds = window_seconds
         self.hop_seconds = hop_seconds
-        self.min_tail_seconds = minimum_tail_seconds if minimum_tail_seconds is not None else min_tail_seconds
-        self.min_new_tail_seconds = hop_seconds / 2 if min_new_tail_seconds is None else min_new_tail_seconds
         self.buffer = bytearray()
         self.hops = 0  # hop boundaries already emitted
         self.index = 0
@@ -73,8 +59,8 @@ class AudioBucketer:
         return len(self.buffer) / (self.sample_rate * 2)
 
     def _window(self, start_seconds: float, end_seconds: float) -> AudioChunk:
-        a = int(start_seconds * self.sample_rate) * 2
-        b = int(end_seconds * self.sample_rate) * 2
+        a = round(start_seconds * self.sample_rate) * 2
+        b = round(end_seconds * self.sample_rate) * 2
         self.index += 1
         return AudioChunk(self.index, bytes(self.buffer[a:b]),
                           round(start_seconds, 2), round(end_seconds, 2), self.sample_rate)
@@ -89,15 +75,5 @@ class AudioBucketer:
         return ready
 
     def flush(self) -> list[AudioChunk]:
-        end = self.seconds
-        if self.hops == 0:
-            # Never crossed a full hop: no prior window to lean on, so the whole
-            # clip has to clear the real floor by itself.
-            if end < self.min_tail_seconds:
-                return []
-            return [self._window(0.0, end)]
-        # At least one window already fired -- only worth a final, mostly
-        # redundant read if the genuinely new content since then is meaningful.
-        if end - self.hops * self.hop_seconds < self.min_new_tail_seconds:
-            return []
-        return [self._window(max(0.0, end - self.window_seconds), end)]
+        """No extra analysis on Save: feed() already emitted every scheduled hop."""
+        return []
