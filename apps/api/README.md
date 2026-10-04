@@ -119,6 +119,11 @@ Local recording timers and Whisper preview scheduling remain unchanged.
 
 ## Local webhook setup
 
+ngrok gives the local API a public HTTPS callback address that AMPLIFIER can reach.
+It forwards incoming callbacks to `api:8000` on the Compose network. The browser
+still connects directly to the local API; audio uploads to AMPLIFIER and requests
+to Claude use the backend's existing outgoing connections.
+
 1. Create an [ngrok account](https://dashboard.ngrok.com/signup), copy its authtoken,
    and obtain your static development domain from the ngrok dashboard.
 2. Set these values only in the ignored `apps/api/.env`:
@@ -130,7 +135,11 @@ Local recording timers and Whisper preview scheduling remain unchanged.
    ```
 
    Generate a signing secret with `python -c "import secrets; print(secrets.token_hex(32))"`.
-   Set AMPLIFIER account/API credentials as usual. Keep keys out of frontend env files.
+   Use the exact domain assigned to your account, including its suffix. Set
+   `WEBHOOK_BASE_URL` to the HTTPS origin only; the backend appends
+   `/v1/webhooks/amplifier`. Keep an existing signing secret when reconfiguring the
+   tunnel. Set AMPLIFIER account/API credentials as usual; keep keys out of frontend
+   env files and commits.
 3. Run `docker compose --profile webhooks up --build -d` from this directory.
    The optional ngrok service forwards to `api:8000`. Its inspector is bound on the
    host only at `http://127.0.0.1:4040`.
@@ -150,6 +159,43 @@ See ngrok's [agent configuration](https://ngrok.com/docs/gateway/agent/config/v3
 and [deny traffic policy](https://ngrok.com/docs/gateway/traffic-policy/actions/deny).
 The committed policy allows only POST to the webhook path; app auth and signature
 verification remain the backend's responsibility.
+
+### Managing ngrok in Docker Desktop
+
+After Compose creates the services, open **Containers → api** to find `api-1`,
+`db-1`, and `ngrok-1`. Start, stop, and inspect `ngrok-1` there. These names reflect
+the default Compose project name; a custom project name changes the grouping.
+The separate **Extensions → ngrok** interface is not used by this setup.
+
+Run the Compose startup command again after changing `.env` so the API and tunnel
+load the new settings. A simple container restart does not reload environment
+variables. Keep the tunnel running while submitted jobs are awaiting callbacks.
+
+If startup reports `ERR_NGROK_334` / “endpoint is already online,” another ngrok
+session owns the same domain. Stop that domain's existing tunnel before starting
+the project service. For an extension-created endpoint, use **Docker Desktop →
+Extensions → ngrok → Set Offline** on the matching endpoint. Do not enable pooling
+to resolve this conflict: callbacks could be routed to the wrong backend.
+
+### Inspecting callback delivery
+
+Open [the local ngrok inspector](http://127.0.0.1:4040), select a
+`POST /v1/webhooks/amplifier` request, and inspect its job ID, status, JSON body,
+and response. The inspector is exposed only on host localhost. Incoming callbacks
+also appear in **Docker Desktop → Containers → api → api-1 → Logs**.
+
+| Observation | Meaning |
+| --- | --- |
+| Webhook POST returns `200` | The backend accepted the callback. Read the payload's `status` to see whether analysis succeeded or failed. Duplicate valid callbacks are also acknowledged. |
+| Webhook POST returns `401` | The signature is missing or invalid; check that the configured signing secret matches the secret supplied with the job. |
+| Webhook POST returns `400` | The callback body failed terminal-job validation. |
+| Public GET or another public path returns `403` | The tunnel's webhook-only traffic policy is working. Use localhost for the app, API health endpoint, and inspector. |
+| Analysis stays pending or becomes delayed | Check tunnel connectivity and webhook delivery. Use **Check analysis once** for explicit recovery; no automatic status polling runs. |
+
+Each submitted audio window has its own job and terminal callback. Two successful
+webhook POSTs can therefore represent two different windows; compare job IDs before
+treating them as duplicates. API access logs show incoming requests, not the
+backend's outgoing AMPLIFIER uploads and analysis requests.
 
 ## Tests
 

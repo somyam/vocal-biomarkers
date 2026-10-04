@@ -79,6 +79,27 @@ flag is what switches Morning Check-in to this real mic + WebSocket + backend
 flow. Without it, the frontend always shows the scripted demo, even with the
 backend running.
 
+## ngrok
+AMPLIFIER needs a public address to deliver results to. The `ngrok` service provides an HTTPS tunnel:
+```text
+AMPLIFIER → public ngrok URL → FastAPI webhook → Postgres
+                                    ↓
+                          WebSocket update → browser
+```
+
+The browser continues using the local API for audio and text chat. The tunnel
+allows only `POST /v1/webhooks/amplifier`; FastAPI verifies the callback signature
+before storing results.
+
+After starting the `webhooks` profile, manage ngrok in **Docker Desktop →
+Containers → api → ngrok-1**, alongside `api-1` and `db-1` (names depend on the
+Compose project name). This uses the project's ngrok container; the Docker Desktop
+ngrok extension is not required. Avoid running another tunnel on the same domain.
+
+Inspect callback requests and responses at [localhost:4040](http://127.0.0.1:4040).
+Keep the domain, authtoken, and signing secret in the ignored backend `.env`.
+See the [setup and troubleshooting guide](apps/api/README.md#local-webhook-setup).
+
 ## Other scripts
 
 Run from `apps/web/`:
