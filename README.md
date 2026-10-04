@@ -9,24 +9,31 @@ https://github.com/user-attachments/assets/17e03165-f222-4d02-bc8e-31601f13e025
 
 ## In this repo
 
-Two deployables live under `apps/`:
+The application has two parts: a browser frontend and a Python backend. The
+backend connects to Postgres, AMPLIFIER, and Anthropic Claude.
 
-**`apps/web/` — the mobile app.** React + TypeScript, rendered inside a calibrated device-simulator runtime (apps/web/src/mobile/: iPhone and Pixel 10 frames, live status bar, on-screen keyboard). All app-specific screens and logic live in apps/web/src/Prototype.tsx and apps/web/src/prototype.css — everything else under apps/web/src/ is protected scaffold (see AGENTS.md).
+| Location | Responsibility |
+| --- | --- |
+| [`apps/web/`](apps/web/) | React + TypeScript frontend: habit tracking, microphone capture, live captions, conversation history, and text chat. It runs inside an iPhone/Android simulator with shared scrolling and keyboard controls. |
+| [`apps/api/`](apps/api/) | FastAPI backend: receives audio, transcribes it locally with faster-whisper, requests AMPLIFIER analysis and Claude replies, and persists recordings, signals, and conversations in Postgres. Docker Compose runs the API and database. |
+| [`apps/web/public/presentation.html`](apps/web/public/presentation.html) | Presentation view within the frontend: embeds the scripted app beside an event log. It is a demo, not a separate backend service. |
 
-**`apps/api/` — FastAPI + Postgres, dockerized.** Accepts live
-16kHz PCM audio over WebSocket, transcribes it locally
-(faster-whisper), and submits 30-second chunks with a 15 second hop to
-Amplifier's longitudinal Pulse endpoint
-(`POST /v2/models/pulse/groups/{group_id}/analyze/longitudinal`) so each
-reading is scored against that subject's own history. Results land in
-Postgres.
+**In live mode**, the browser streams 16 kHz mono audio to the backend over a
+WebSocket. The backend updates captions and sends AMPLIFIER up to 30 seconds of
+audio every 15 seconds: `0–15`, `0–30`, `15–45`, and so on. **End Turn** pauses
+capture and requests a Claude reply using the transcript, previous turns, and
+prompt caching. **Save Conversation** saves the full recording and shows the
+complete conversation, which can continue through text messages over HTTP.
 
-**`apps/web/public/presentation.html` — the mock demo.** A two-panel view (phone
-mockup + "Live Agent Trace" log) that the app pushes `postMessage` events into,
-narrating what the API calls, signal levels, and agent reasoning would look
-like during an example check-in.
+**Demo versus live:** `/?member=1` uses scripted responses and does not require
+the backend. `/?member=1&live=1` enables real microphone capture and backend
+requests. External analysis and replies require the corresponding server-side
+API credentials; AMPLIFIER falls back to mock results when its keys are absent.
 
-The real, working backend pipeline is the backend described in apps/api/README.md. It includes WebSocket streaming, live transcription, real Amplifier API requests. The apps/api/ folder is not wired up to this particular scripted demo screen for presentation purposes.
+For UI changes, start with `apps/web/src/Prototype.tsx` and
+`apps/web/src/prototype.css`; see [AGENTS.md](AGENTS.md) for protected mobile-runtime
+files. For endpoints, audio processing, configuration, and database tables, see
+the [backend README](apps/api/README.md).
 
 ## Running the application
 
