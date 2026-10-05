@@ -14,7 +14,7 @@
 .habit-brain.is-open { margin: 0 -7px; border: 1px solid rgba(231,157,63,.42); border-radius: 15px; background: rgba(42,25,14,.55); box-shadow: inset 0 1px 0 rgba(255,217,166,.04); }.habit-brain.is-open .habit-row { padding: 0 7px; border-bottom: 0; }.brain-dump { display: grid; justify-items: center; padding: 0 15px 13px; text-align: center; }
 .morning-checkin-overlay { position: absolute; z-index: 30; inset: 0; display: flex; flex-direction: column; min-height: 0; padding: 62px 22px calc(var(--mobile-safe-area-height, 34px) + 24px); background: #090605; color: #faf3e9; }.checkin-header { position: relative; }.checkin-header .eyebrow { margin-bottom: 16px; }.checkin-header h1 { max-width: 290px; margin: 0; font-size: 35px; font-weight: 520; letter-spacing: -.055em; line-height: 1.03; }.checkin-header > p:last-child { max-width: 260px; margin: 10px 0 0; color: #b8a18d; font-size: 14px; line-height: 1.45; }.close-checkin { position: absolute; top: -5px; right: 0; display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid rgba(218,160,94,.45); border-radius: 50%; background: #1b110c; color: #f4c384; }.morning-checkin-overlay .brain-dump { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: flex-start; padding: 35px 12px 6px; }.morning-checkin-overlay .microphone { width: 128px; height: 128px; margin-bottom: 29px; box-shadow: 0 0 0 14px rgba(187,98,20,.08), 0 0 35px rgba(213,123,33,.36), inset 0 0 28px rgba(226,139,45,.24); }.checkin-sub-bubbles { display: grid; width: 272px; justify-items: stretch; gap: 7px; margin-top: auto; }.checkin-sub-bubbles span { width: 100%; padding: 9px 12px; border: 1px solid rgba(220,157,77,.36); border-radius: 999px; background: #21140d; color: #fff5eb; font-size: 14px; font-weight: 560; line-height: 1.2; }.morning-checkin-overlay .recording-timer { margin-top: 0; color: #f4b45e; font-size: 42px; line-height: 1; letter-spacing: .1em; }.morning-checkin-overlay .recording-status { min-height: 0; margin-top: 9px; font-size: 11px; }.morning-checkin-overlay .recorder-actions { margin-top: 16px; }.morning-checkin-overlay .stop-recording,.morning-checkin-overlay .save-audio { min-height: 39px; padding: 0 15px; font-size: 12px; }.morning-checkin-overlay .audio-preview { max-width: 300px; height: 34px; }
 .microphone { display: grid; width: 76px; height: 76px; margin: 0 0 9px; place-items: center; border: 1.5px solid #f4b35e; border-radius: 50%; background: rgba(177,91,22,.24); box-shadow: 0 0 0 9px rgba(187,98,20,.08), 0 0 22px rgba(213,123,33,.32), inset 0 0 18px rgba(226,139,45,.24); color: #fff5eb; }.microphone.is-listening { border-color: #fff4dd; background: #c97428; box-shadow: 0 0 0 9px rgba(232,146,45,.16), 0 0 28px rgba(239,155,50,.62); }.brain-dump p { max-width: 270px; margin: 0; color: #fff6ec; font-size: 15px; font-weight: 520; letter-spacing: -.025em; line-height: 1.25; }.brain-dump span { margin-top: 4px; color: #a9917b; font-size: 10px; }.recording-timer { margin-top: 8px; color: #efaa51; font-size: 19px; font-variant-numeric: tabular-nums; letter-spacing: .08em; }.recording-status { min-height: 14px; }.recording-error { color: #f3c18c !important; }.recorder-actions { display: flex; gap: 7px; min-height: 0; margin-top: 9px; }.stop-recording,.save-audio { min-height: 30px; padding: 0 10px; border: 1px solid rgba(236,171,86,.55); border-radius: 9px; background: transparent; color: #f3c884; font-size: 10px; font-weight: 700; }.save-audio { border-color: #bd6f28; background: #bd6f28; color: #fff9f2; }.save-audio:disabled { border-color: rgba(176,127,76,.35); background: rgba(94,54,25,.5); color: #aa8d72; }.audio-preview { width: 100%; height: 28px; margin-top: 9px; accent-color: #d88633; }
-.add-habit { margin-top: 22px; overflow: hidden; border: 1px solid rgba(195,133,66,.36); border-radius: 17px; background: rgba(39,25,15,.62); }.add-habit.is-expanded { display: grid; grid-template-columns: 1fr 1.45fr; align-items: center; }.add-habit-trigger { display: flex; width: 100%; align-items: center; gap: 9px; padding: 11px 12px; border: 0; background: transparent; color: #f9efe6; text-align: left; }.plus-orb { display: grid; width: 35px; height: 35px; flex: 0 0 35px; place-items: center; border: 1.5px solid #d99a4d; border-radius: 50%; color: #efad52; }.add-habit-trigger > span:nth-child(2) { display: grid; min-width: 0; gap: 3px; }.add-habit-trigger strong { font-size: 14px; font-weight: 540; letter-spacing: -.02em; }.add-habit-trigger small { color: #9f8c7e; font-size: 9px; white-space: nowrap; }.add-habit.is-expanded .add-habit-trigger .row-chevron { display: none; }.frequency-group { display: grid; grid-template-columns: repeat(3,1fr); gap: 2px; margin: 0 8px 0 0; overflow: hidden; border: 1px solid rgba(180,128,78,.38); border-radius: 11px; background: #1d130e; }.frequency { min-height: 35px; border: 0; background: transparent; color: #cbb7a4; font-size: 10px; font-weight: 600; }.frequency.is-selected { border-radius: 8px; background: #bd6f28; color: #fff9f2; box-shadow: inset 0 0 0 1px rgba(255,217,160,.28); }
+
 .bottom-nav { position: absolute; z-index: 15; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(2,1fr); height: calc(var(--mobile-safe-area-height, 34px) + 62px); padding: 8px 52px var(--mobile-safe-area-height, 34px); border-top: 1px solid rgba(215,163,104,.22); background: rgba(12,7,5,.94); backdrop-filter: blur(18px); }.nav-item { display: grid; justify-items: center; gap: 3px; border: 0; background: transparent; color: #9f8c7e; font-size: 11px; font-weight: 650; }.nav-item.is-active { color: #efaa51; }
 .range-switcher { display: grid; grid-template-columns: repeat(3,1fr); gap: 3px; padding: 3px; border-radius: 12px; background: #21150e; }.range { height: 34px; border: 0; border-radius: 9px; background: transparent; color: #ab9480; font-size: 11px; font-weight: 650; }.range.is-selected { background: #bb6d27; color: #fff8ee; }
 .checkin-header h1 { max-width: 310px; font-size: 28px; letter-spacing: -.045em; line-height: 1.08; }
@@ -57,7 +57,7 @@
 @media (max-height: 720px) { .screen-content { padding-top: 57px; }.today-header h1 { font-size: 32px; }.habit-row { min-height: 61px; } }
 .screen-content { display: flex; flex-direction: column; }
 .app-screen .mobile-scroll-content { min-height: 100%; }
-.add-habit { margin-top: auto; }
+
 
 .morning-checkin-overlay .recorder-actions .end-turn:disabled { opacity: .45; }
 .morning-checkin-overlay .recorder-actions { justify-content: center; width: 100%; }
@@ -77,3 +77,75 @@
 /* The saved view reserves keyboard space for both history and composer. */
 .saved-history .mobile-scroll { bottom: 0; }
 .saved-history .mobile-scrollbar { bottom: 4px; }
+
+/* Habit creation uses the shared phone-scoped sheet, keyboard and scrolling. */
+.add-habit-area { display: flex; flex-direction: column; align-items: flex-end; margin-top: auto; padding-top: 24px; }
+.add-habit-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: max-content; min-height: 44px; padding: 9px 12px; border: 1px solid #835619; border-radius: 10px; background: #1b1109; color: #faf3e9; font: inherit; font-size: 15px; }
+.add-habit-trigger svg { color: #efad52; }
+.habit-notice { max-width: 100%; margin: 0 0 12px; color: #d5bda0; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.habit-notice:empty { display: none; }
+.bottom-sheet:has(.habit-form) { height: 620px; border: 1px solid #604823; border-bottom: 0; border-radius: 26px 26px 0 0; background: #0e0905; color: #faf3e9; }
+.bottom-sheet:has(.habit-form[data-frequency="Weekly"]) { height: 690px; }
+.bottom-sheet:has(.habit-form[data-frequency="Custom"]), .bottom-sheet:has(.habit-form[data-frequency="Once"]) { height: 780px; }
+.bottom-sheet:has(.habit-form) .sheet-handle-zone { height: 16px; flex-shrink: 0; }
+.bottom-sheet:has(.habit-form) .sheet-handle { width: 32px; height: 3px; background: #5a4026; }
+.bottom-sheet:has(.habit-form) .sheet-header { margin: 0 22px; padding: 12px 42px 17px 0; border-bottom: 1px solid #5d421c; }
+.bottom-sheet:has(.habit-form) .sheet-title { font-size: 28px; font-weight: 550; letter-spacing: -.04em; }
+.bottom-sheet:has(.habit-form) .sheet-description { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.bottom-sheet:has(.habit-form) .sheet-content { display: flex; flex: 1; min-height: 0; overflow: hidden; padding: 0; }
+.habit-form { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.habit-sheet-close { position: absolute; z-index: 1; right: 14px; top: 23px; display: grid; place-items: center; width: 44px; height: 44px; border: 0; background: transparent; color: #e5a447; }
+.habit-form-body { position: relative; flex: 1; min-height: 0; }
+.habit-form-scroll { inset: 0; background: transparent; }
+/* The sheet already moves above the runtime keyboard; don't subtract it twice. */
+.habit-form-scroll .mobile-scroll { bottom: 0; }
+.habit-form-scroll .mobile-scrollbar { bottom: 4px; }
+.habit-form-scroll .mobile-scroll-content { padding: 0 22px 4px; }
+.habit-field { padding: 18px 0; border-bottom: 1px solid #47341e; }
+.habit-field-label, .habit-name-field label { display: block; margin-bottom: 12px; color: #f0e8de; font-size: 14px; font-weight: 450; }
+.habit-name-field input { width: 100%; height: 46px; padding: 0 12px; border: 1px solid #876332; border-radius: 8px; background: transparent; color: #fff4e9; font: inherit; font-size: 16px; }
+.habit-name-field input::placeholder { color: #9e8b76; }
+.habit-repeat-options { display: grid; grid-template-columns: repeat(4, 1fr); overflow: hidden; border: 1px solid #876332; border-radius: 8px; }
+.habit-repeat-options button { min-height: 44px; padding: 0 3px; border: 0; border-right: 1px solid #43301b; background: transparent; color: #faf3e9; font: inherit; font-size: 14px; }
+.habit-repeat-options button:last-child { border-right: 0; }
+.habit-repeat-options button[aria-pressed="true"], .habit-weekdays button[aria-pressed="true"], .habit-calendar-grid button.is-selected { background: #bd7227; border-color: #bd7227; color: #fffaf3; }
+.habit-custom-tabs { display: flex; gap: 22px; margin: 8px 0 16px; border-bottom: 1px solid #47341e; }
+.habit-custom-tabs button { min-height: 44px; padding: 0 0 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #ae9c8b; font: inherit; font-size: 14px; }
+.habit-custom-tabs button[aria-pressed="true"] { border-bottom-color: #e2a54a; color: #f1b056; }
+.habit-interval { display: flex; align-items: center; gap: 12px; padding-bottom: 8px; font-size: 14px; }
+.habit-stepper { display: flex; align-items: center; overflow: hidden; border: 1px solid #876332; border-radius: 8px; }
+.habit-stepper button { display: grid; place-items: center; width: 40px; height: 44px; border: 0; background: transparent; color: #e7ab54; }
+.habit-stepper output { min-width: 25px; text-align: center; font-size: 16px; }
+.habit-interval select { flex: 1; min-width: 0; height: 46px; padding: 0 8px; border: 1px solid #876332; border-radius: 8px; color: #fff4e9; background: #0e0905; font: inherit; }
+.habit-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.habit-weekdays button { display: grid; place-items: center; aspect-ratio: 1; min-width: 0; border: 1px solid #a77a3c; border-radius: 50%; color: #f4eadd; background: transparent; font: inherit; font-size: 14px; }
+.habit-date-row { display: flex; align-items: center; width: 100%; min-height: 32px; gap: 12px; padding: 0; border: 0; background: transparent; color: #f4eadd; text-align: left; font: inherit; font-size: 16px; }
+.habit-date-row svg { color: #dea34d; }
+.habit-date-row svg:last-child { margin-left: auto; }
+.habit-end-options { display: flex; gap: 12px; margin-top: 12px; }
+.habit-end-options button { min-height: 44px; padding: 0 14px; border: 1px solid #876332; border-radius: 8px; background: transparent; color: #f4eadd; font: inherit; font-size: 14px; }
+.habit-end-options button[aria-pressed="true"] { background: #bd7227; color: white; }
+.habit-summary { padding: 18px 0 10px; }
+.habit-summary p { margin: 0; color: #f4eadd; font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
+.habit-form-footer { flex-shrink: 0; padding: 12px 18px; background: #0e0905; }
+.habit-save { width: 100%; min-height: 46px; padding: 10px 14px; border: 1px solid #cf8a36; border-radius: 10px; background: #bd7227; color: #fff8f0; font: inherit; font-size: 16px; }
+.habit-save:disabled { opacity: .4; }
+.habit-validation { margin: 12px 0; color: #e8bb85; font-size: 13px; line-height: 1.4; }
+.habit-calendar-header { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 8px; }
+.habit-calendar-header strong { font-size: 16px; font-weight: 500; }
+.habit-calendar-header button { display: grid; place-items: center; width: 40px; height: 44px; border: 0; color: #dcb483; background: transparent; }
+.habit-calendar-header svg { width: 22px; height: 22px; }
+.habit-calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; align-items: center; }
+.calendar-weekday { padding: 4px 0 8px; text-align: center; color: #b9a38e; font-size: 13px; }
+.habit-calendar-grid button { display: grid; place-items: center; width: 100%; aspect-ratio: 1; padding: 0; border: 1px solid transparent; border-radius: 50%; color: #faf3e9; background: transparent; font: inherit; font-size: 14px; }
+.habit-calendar-grid button[aria-current="date"] { border-color: #e0a850; }
+.habit-calendar button:disabled, .habit-stepper button:disabled { opacity: .3; }
+.habit-form button:focus-visible, .habit-form select:focus-visible, .habit-form input:focus-visible, .add-habit-trigger:focus-visible { outline: 2px solid #f3b557; outline-offset: 3px; }
+/* Fit the simple states without scrolling; longer rules retain the shared scroll. */
+.bottom-sheet:has(.habit-form[data-frequency="Daily"]) { height: 650px; }
+.bottom-sheet:has(.habit-form[data-frequency="Weekly"]) { height: 750px; }
+.habit-field { padding: 14px 0; }
+.habit-field-label, .habit-name-field label { margin-bottom: 10px; }
+.habit-form[data-frequency="Custom"] .habit-field { padding: 12px 0; }
+/* Clamp this app's sheet above the keyboard without changing the shared runtime. */
+.bottom-sheet:has(.habit-form[data-keyboard-open="true"]) { top: 64px; height: auto; }

@@ -27,7 +27,7 @@ Pulse JSON payload, and a transcript of the recording to Postgres.
 ## Data model
 The backend has these postgres tables: `users`, `checkins`, `recordings`,
 `amplifier_jobs`, `analysis_windows`, `amplifier_webhook_inbox`, `checkin_signals`,
-`conversation_turns`, `conversation_text_turns`, `interventions`, and `user_interventions`. The latter
+`conversation_turns`, `conversation_text_turns`, `conversation_contexts`, `interventions`, and `user_interventions`. The latter
 records which interventions the private MVP user is currently doing. `checkin_signals`
 holds one row per returned signal per successful window (so the same signal can
 appear several times within one check-in), including the longitudinal fields
@@ -215,25 +215,69 @@ authorization and connection races, bounded retries, deadlines, and explicit rec
 The live recorder shows **Save Conversation** and **End Turn**. End Turn sends
 `checkin.turn.end` over the existing authenticated audio WebSocket, after any
 previous PCM frames. It pauses the microphone and AMPLIFIER activity, transcribes
-only the new turn, and sends the text plus earlier successful turns to Anthropic's
-Messages API. The microphone remains paused when the reply arrives; Resume starts
+only the new turn, and sends the text plus earlier successful turns and the saved
+historical context to Anthropic's Messages API. The microphone remains paused when
+the reply arrives; Resume starts
 the next voice turn. This request is an explicit exception to the paused-work gate.
 Save Conversation still finalizes the complete recording and transcript.
 
 Set server-side `ANTHROPIC_API_KEY` (`ANTHROPIC_API` is also accepted) and optionally
 `ANTHROPIC_MODEL` (default `claude-sonnet-5-5`). The key is never sent to the browser.
 No Anthropic request is made by ordinary Pause or Save. Sonnet does not wait for
-AMPLIFIER results and receives the transcript, not audio or biomarker scores.
+current AMPLIFIER results. It receives text and available historical biomarker
+measurements from the conversation's startup snapshot, never audio.
 
 Each request enables automatic prompt caching with top-level
-`cache_control: {"type": "ephemeral", "ttl": "5m"}`. The unchanged system prompt
-and growing message history form the cached prefix. Anthropic Messages still
+`cache_control: {"type": "ephemeral", "ttl": "5m"}`. The unchanged system prompt,
+fixed historical snapshot, and growing message history form the cached prefix.
+Anthropic Messages still
 requires the complete history on every request; the server reconstructs it from
 successful `conversation_turns` in this check-in, not a provider response-ID chain.
 Cache expiry never loses conversation history. Sonnet 5.5 requires at least 512
 prefix tokens to cache; short prompts work normally without a cache hit. We do not
 pad prompts or issue background keep-alive requests. See
 [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
+
+### Historical context at conversation start
+
+`POST /v1/checkins` creates the check-in and its `conversation_contexts` row in one
+transaction. The server selects only the authenticated user's finalized recordings
+(`recording_completed_at` is set), ordered by `started_at`: at most 10 from the
+preceding 30 days. An unfinished analysis does not block selection or creation.
+The opening stays “How are you feeling today?”; the first Claude call still requires
+End Turn or a saved text message. This does not add a provider call, polling, or a
+new public endpoint. The prototype token currently identifies `mvp-user`.
+
+Each snapshot contains the full `checkins.transcript` once per source recording,
+timestamps, duration, and successful non-mock AMPLIFIER job results. Spoken turn
+transcripts, prior Claude replies, and earlier text-chat exchanges are not added
+again. Analysis uses the persisted job responses to retain per-window provenance:
+job/window IDs, audio offsets when available, recorded time, signal scores/levels,
+longitudinal fields (including nulls), and audio-quality information. Older jobs
+without window metadata retain their job ID and timestamp. Overlapping windows
+are never averaged or treated as independent readings. Missing transcripts and
+unavailable analysis are marked explicitly; pending/failed job counts remain
+visible in the context, but their payloads and provider errors are excluded.
+
+The row's primary key is the check-in ID. It stores `captured_at`, `format_version`,
+`source_checkin_ids`, the structured `snapshot`, and exact `rendered_context` text.
+The selected source IDs remain for audit even if size limits omit their content.
+History is rendered in chronological order with a 60,000-character limit. If
+needed, older transcript excerpts are shortened first, followed by omission of
+oldest windows, then oldest conversations. The JSON records omitted character,
+window, and conversation counts. No extra model call summarizes the history.
+
+Both voice and text replies read the stored text unchanged before the current
+exchange. Reopening, retries, restarts, edited source transcripts, and late
+webhooks do not rebuild the snapshot. New conversations can use those newer data.
+The system prompt labels all historical content as untrusted background, preserves
+uncertainty, and distinguishes past measurements from present reports. Snapshot
+content stays server-side until sent to Anthropic; it is not added to public
+check-in responses or logs. It is stored in Postgres as personal conversation data.
+
+Startup's existing `Base.metadata.create_all` adds this table without altering
+existing data. Old conversations without a snapshot keep their original prompt;
+there is no automatic backfill. Prompt cache expiry never deletes this history.
 
 WebSocket events: `turn_processing`, `turn_transcript` (`text`), `turn_result`
 (`turn_id`, `transcript`, `reply`, `model`, `usage`), or `error` with code
@@ -298,8 +342,9 @@ requests are marked failed at startup and can be explicitly retried with their
 original request ID. Restart never automatically calls Claude. A process
 crash after Claude responds but before DB commit may cause a provider call on retry.
 
-Claude receives the successful voice exchanges, final saved speech, and completed
-text exchanges with the same system prompt and five-minute automatic caching.
+Claude receives the fixed historical snapshot plus successful voice exchanges,
+final saved speech, and completed text exchanges with the same system prompt and
+five-minute automatic caching.
 Microphone capture, audio uploads, and AMPLIFIER submissions do not resume for text
 chat. Reopening the saved check-in in the current page reloads history from the API;
 there is no new all-conversations browser or cross-refresh selection storage.

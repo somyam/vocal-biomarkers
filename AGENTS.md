@@ -83,3 +83,10 @@ Run from `apps/api/`:
   Keep its domain/token in ignored `.env` files and its inspector on host localhost.
 - Tests explicitly disable external credentials. Postgres tests use a unique temporary
   schema through `TEST_POSTGRES_URL`; never run destructive tests on public tables.
+
+## Habit creation UI
+
+- Use the compact, right-aligned `+ Add habit` launcher without subtext.
+- Open the shared BottomSheet in the approved dark/amber style; use Daily, Weekly, Custom, and Once. Custom supports repeat rules and individually selected calendar dates.
+- Use KeyboardInput and MobileScroll; keep sheet controls within the phone when the keyboard opens. Do not modify the protected runtime to style this sheet.
+- Custom habits currently persist in browser localStorage (`vocal-biomarkers.habits.v1`), not Postgres. Show them on Today only when scheduled, using local calendar dates. Monthly rules skip months missing the selected day.

@@ -35,6 +35,17 @@ class CheckIn(Base):
     transcribed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class ConversationContext(Base):
+    """Immutable history captured with a new check-in, never rebuilt on reply."""
+    __tablename__ = "conversation_contexts"
+    checkin_id: Mapped[str] = mapped_column(ForeignKey("checkins.checkin_id"), primary_key=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime)
+    format_version: Mapped[int]
+    source_checkin_ids: Mapped[list] = mapped_column(JSON)
+    snapshot: Mapped[dict] = mapped_column(JSON)
+    rendered_context: Mapped[str] = mapped_column(Text)
+
+
 class Recording(Base):
     __tablename__ = "recordings"
     recording_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)

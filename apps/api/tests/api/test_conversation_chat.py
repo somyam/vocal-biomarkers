@@ -34,7 +34,7 @@ def saved_checkin():
 
 def test_text_continuation_history_idempotency_and_persistence(saved_checkin, monkeypatch):
     calls = []
-    async def reply(self, messages):
+    async def reply(self, messages, *, history_context=None):
         calls.append(messages)
         return {'reply': f'Text reply {len(calls)}', 'model': 'test',
                 'raw_response': {'id': f'msg-{len(calls)}', 'usage': {'cache_read_input_tokens': 600}}}
@@ -61,7 +61,7 @@ def test_text_continuation_history_idempotency_and_persistence(saved_checkin, mo
 
 def test_failed_text_retry_uses_same_row_and_preserves_message(saved_checkin, monkeypatch):
     calls = []
-    async def reply(self, messages):
+    async def reply(self, messages, *, history_context=None):
         calls.append(messages)
         if len(calls) == 1:
             raise ConversationError('Temporary failure')
@@ -104,7 +104,7 @@ def test_message_auth_completion_and_validation(saved_checkin):
 async def test_concurrent_duplicate_requests_only_call_claude_once(saved_checkin, monkeypatch):
     gate, entered = asyncio.Event(), asyncio.Event()
     calls = []
-    async def reply(self, messages):
+    async def reply(self, messages, *, history_context=None):
         calls.append(messages)
         entered.set()
         await gate.wait()
@@ -125,7 +125,7 @@ async def test_concurrent_duplicate_requests_only_call_claude_once(saved_checkin
 
 def test_restart_makes_interrupted_text_retryable_without_provider_call(saved_checkin, monkeypatch):
     calls = []
-    async def reply(self, messages):
+    async def reply(self, messages, *, history_context=None):
         calls.append(messages)
         return {'reply': 'Recovered after restart', 'model': 'test', 'raw_response': {}}
     monkeypatch.setattr(SonnetClient, 'reply', reply)

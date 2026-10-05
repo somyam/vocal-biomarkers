@@ -22,12 +22,33 @@ backend connects to Postgres, AMPLIFIER, and Anthropic Claude.
 WebSocket. The backend updates captions and sends AMPLIFIER up to 30 seconds of
 audio every 15 seconds: `0–15`, `0–30`, `15–45`, and so on. **End Turn** pauses
 capture and requests a Claude reply using the transcript, previous turns, and
-prompt caching. **Save Conversation** saves the full recording and shows the
+saved user history with prompt caching. **Save Conversation** saves the full recording and shows the
 complete conversation, which can continue through text messages over HTTP as soon
 as recording/transcription finish—even while analysis is pending. AMPLIFIER sends
 signed webhooks to the backend. A separate authenticated notification WebSocket
 pushes saved conversation and analysis snapshots to the browser. There is no
 automatic status polling; **Check analysis once** is an explicit recovery action.
+
+**History and prompt caching:** Claude's context combines historical background
+with the current conversation. When a conversation starts, the backend saves a
+fixed snapshot of up to 10 finalized recordings from the previous 30 days: each
+full transcript once and its available, non-mock AMPLIFIER measurements. Claude
+receives that background alongside the current conversation's voice/text turns.
+Prompt caching reuses an unchanged prefix to reduce repeated processing; Postgres
+keeps the actual history. The snapshot stays fixed across retries, reopening, and
+restarts, so late analysis results enter the next new conversation. The opening
+remains “How are you feeling today?” and starting or saving never calls Claude.
+Historical context is capped at 60,000 characters with explicit omission markers;
+older text chats and historical Claude replies are excluded. See
+[historical context](apps/api/README.md#historical-context-at-conversation-start).
+
+**Adding habits:** the compact **+ Add habit** button opens a name-and-schedule
+sheet with Daily, Weekly, Custom, and Once options. Custom supports repeat rules
+(every N days/weeks/months) and individually selected calendar dates. New habits
+are saved in this browser and shown on Today when due; they are not yet synced to
+Postgres or included in Claude's historical context. Monthly rules skip months
+without the selected day. Existing seeded habits and the voice check-in remain
+available as before.
 
 **Demo versus live:** `/?member=1` uses scripted responses and does not require
 the backend. `/?member=1&live=1` enables real microphone capture and backend

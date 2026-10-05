@@ -10,3 +10,7 @@ apps/api/**/*.pyc
 apps/api/*.db
 test-results/
 playwright-report/
+
+# Local visual QA captures and reports
+.artifacts/
+design-qa.md

@@ -5,7 +5,9 @@ import {
   BarChartIcon,
   CheckIcon,
   Cross1Icon,
-  ChevronDownIcon,
+  ChevronLeftIcon,
+  CalendarIcon,
+  MinusIcon,
   ChevronRightIcon,
   FileTextIcon,
   HeartIcon,
@@ -16,7 +18,7 @@ import {
   PlusIcon,
   SunIcon,
 } from "@radix-ui/react-icons";
-import { KeyboardInput, MobileScroll, useKeyboard, useKeyboardInsets } from "./mobile";
+import { BottomSheet, KeyboardInput, MobileScroll, useKeyboard, useKeyboardInsets } from "./mobile";
 
 // `?live=1` (e.g. /?member=1&live=1) switches the Morning Check-in to the real
 // mic + WebSocket + backend flow instead of the scripted presentation demo.
@@ -26,7 +28,7 @@ function isLiveMode() {
 }
 
 type Tab = "today" | "trends";
-type Frequency = "Daily" | "Weekly" | "Custom";
+type Frequency = "Daily" | "Weekly" | "Custom" | "Once";
 
 type Habit = {
   id: string;
@@ -45,7 +47,7 @@ const habits: Habit[] = [
   { id: "workout", name: "Workout", detail: "Strength training · 45 min", Icon: BarChartIcon },
 ];
 
-const frequencies: Frequency[] = ["Daily", "Weekly", "Custom"];
+const frequencies: Frequency[] = ["Daily", "Weekly", "Custom", "Once"];
 
 export default function Prototype() {
   const [tab, setTab] = useState<Tab>("today");
@@ -54,8 +56,30 @@ export default function Prototype() {
   const [savedCheckinId, setSavedCheckinId] = useState<string | null>(null);
   const [brainTranscript, setBrainTranscript] = useState<string | null>(null);
   const [conversationTranscript, setConversationTranscript] = useState<string | null>(null);
-  const [frequency, setFrequency] = useState<Frequency>("Daily");
-  const [addHabitOpen, setAddHabitOpen] = useState(true);
+  const [addHabitOpen, setAddHabitOpen] = useState(false);
+  const [customHabits, setCustomHabits] = useState<ScheduledHabit[]>(loadHabits);
+  const [today, setToday] = useState(() => localDate());
+  const [habitNotice, setHabitNotice] = useState("");
+  const keyboard = useKeyboard();
+
+  useEffect(() => {
+    const update = () => setToday(localDate());
+    const timer = window.setInterval(update, 60_000);
+    window.addEventListener("focus", update);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", update); };
+  }, []);
+  useEffect(() => { setCompleted(new Set()); }, [today]);
+
+  function addHabit(habit: ScheduledHabit): string | null {
+    const next = [...customHabits, habit];
+    try { window.localStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(next)); }
+    catch { return "This browser could not save your habit. Please try again."; }
+    setCustomHabits(next);
+    setHabitNotice(`${habit.name} added. ${scheduleSummary(habit.schedule)}`);
+    keyboard.hide();
+    setAddHabitOpen(false);
+    return null;
+  }
 
   function toggleHabit(id: string) {
     setCompleted((current) => {
@@ -78,12 +102,13 @@ export default function Prototype() {
           <TodayScreen
             completed={completed}
             brainOpen={brainOpen}
-            frequency={frequency}
+            today={today}
+            customHabits={customHabits}
+            habitNotice={habitNotice}
             addHabitOpen={addHabitOpen}
             onToggle={toggleHabit}
             onBrainToggle={() => setBrainOpen((value) => !value)}
-            onFrequency={setFrequency}
-            onAddHabit={() => setAddHabitOpen((value) => !value)}
+            onAddHabit={() => { keyboard.hide(); setHabitNotice(""); setAddHabitOpen(true); }}
           />
         </main>
       </MobileScroll>
@@ -108,6 +133,8 @@ export default function Prototype() {
         />
       ) : null}
 
+      <HabitSheet open={addHabitOpen} onClose={() => { keyboard.hide(); setAddHabitOpen(false); }} onAdd={addHabit} today={today} />
+
       <nav className="bottom-nav" aria-label="Primary navigation">
         <button type="button" className={tab === "today" ? "nav-item is-active" : "nav-item"} onClick={() => setTab("today")} aria-current={tab === "today" ? "page" : undefined}>
           <SunIcon width={24} height={24} />
@@ -118,25 +145,28 @@ export default function Prototype() {
   );
 }
 
-function TodayScreen({ completed, brainOpen, frequency, addHabitOpen, onToggle, onBrainToggle, onFrequency, onAddHabit }: {
+function TodayScreen({ completed, brainOpen, today, customHabits, habitNotice, addHabitOpen, onToggle, onBrainToggle, onAddHabit }: {
   completed: Set<string>;
   brainOpen: boolean;
-  frequency: Frequency;
+  today: string;
+  customHabits: ScheduledHabit[];
+  habitNotice: string;
   addHabitOpen: boolean;
   onToggle: (id: string) => void;
   onBrainToggle: () => void;
-  onFrequency: (value: Frequency) => void;
   onAddHabit: () => void;
 }) {
   return (
     <>
       <header className="today-header">
-        <p className="eyebrow"><span>Sunday, September 20, 2026</span></p>
+        <p className="eyebrow"><span>{parseLocalDate(today).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span></p>
         <h1>Good morning, Maya</h1>
       </header>
 
       <section className="habit-list" aria-label="Daily habits">
-        {habits.map((habit) => {
+        {[...habits, ...customHabits.filter((habit) => isHabitDue(habit.schedule, today)).map((habit) => ({
+          id: habit.id, name: habit.name, detail: scheduleSummary(habit.schedule), Icon: CalendarIcon,
+        }))].map((habit) => {
           const isBrainDump = habit.id === "brain";
           const isComplete = completed.has(habit.id);
           const Icon = habit.Icon;
@@ -157,18 +187,224 @@ function TodayScreen({ completed, brainOpen, frequency, addHabitOpen, onToggle, 
         })}
       </section>
 
-      <section className={addHabitOpen ? "add-habit is-expanded" : "add-habit"} aria-label="Add a habit">
-        <button type="button" className="add-habit-trigger" onClick={onAddHabit} aria-expanded={addHabitOpen}>
-          <span className="plus-orb"><PlusIcon width={24} height={24} /></span>
-          <span><strong>Add habit</strong><small>{addHabitOpen ? "Choose how often it repeats" : "Make your protocol yours"}</small></span>
-          <ChevronDownIcon className={addHabitOpen ? "row-chevron is-open" : "row-chevron"} width={23} height={23} />
+      <div className="add-habit-area">
+        <p className="habit-notice" role="status">{habitNotice}</p>
+        <button type="button" className="add-habit-trigger" onClick={onAddHabit} aria-expanded={addHabitOpen} aria-haspopup="dialog">
+          <PlusIcon width={22} height={22} aria-hidden="true" />
+          <span>Add habit</span>
         </button>
-        {addHabitOpen ? <div className="frequency-group" role="group" aria-label="Habit frequency">
-          {frequencies.map((option) => <button type="button" key={option} className={frequency === option ? "frequency is-selected" : "frequency"} onClick={() => onFrequency(option)} aria-pressed={frequency === option}>{option}</button>)}
-        </div> : null}
-      </section>
+      </div>
     </>
   );
+}
+
+type HabitSchedule = {
+  frequency: Frequency;
+  customMode: "rule" | "dates";
+  interval: number;
+  unit: "days" | "weeks" | "months";
+  weekdays: number[];
+  start: string;
+  end: string | null;
+  dates: string[];
+  once: string;
+};
+type ScheduledHabit = { id: string; name: string; schedule: HabitSchedule };
+const HABITS_STORAGE_KEY = "vocal-biomarkers.habits.v1";
+const weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const weekdayOrder = [1, 2, 3, 4, 5, 6, 0];
+
+function localDate(date = new Date()): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+function parseLocalDate(value: string): Date {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day, 12);
+}
+function displayDate(value: string): string {
+  return parseLocalDate(value).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+function dayNumber(value: string): number {
+  const date = parseLocalDate(value);
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000;
+}
+function initialSchedule(today: string): HabitSchedule {
+  return { frequency: "Daily", customMode: "rule", interval: 1, unit: "weeks",
+    weekdays: [parseLocalDate(today).getDay()], start: today, end: null, dates: [], once: today };
+}
+function validDate(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && localDate(parseLocalDate(value)) === value;
+}
+function loadHabits(): ScheduledHabit[] {
+  try {
+    const stored: unknown = JSON.parse(window.localStorage.getItem(HABITS_STORAGE_KEY) || "[]");
+    if (!Array.isArray(stored)) return [];
+    return stored.filter((habit) => {
+      const s = habit?.schedule;
+      return typeof habit?.id === "string" && typeof habit?.name === "string" && habit.name.trim().length > 0 && habit.name.length <= 80 && s &&
+        frequencies.includes(s.frequency) && ["rule", "dates"].includes(s.customMode) &&
+        Number.isInteger(s.interval) && s.interval >= 1 && s.interval <= 99 && ["days", "weeks", "months"].includes(s.unit) &&
+        Array.isArray(s.weekdays) && s.weekdays.every((day: unknown) => Number.isInteger(day) && Number(day) >= 0 && Number(day) <= 6) &&
+        validDate(s.start) && validDate(s.once) && (s.end === null || (validDate(s.end) && s.end >= s.start)) &&
+        Array.isArray(s.dates) && s.dates.every(validDate);
+    });
+  } catch { return []; }
+}
+
+export function isHabitDue(schedule: HabitSchedule, date: string): boolean {
+  if (schedule.frequency === "Once") return date === schedule.once;
+  if (schedule.frequency === "Custom" && schedule.customMode === "dates") return schedule.dates.includes(date);
+  if (date < schedule.start || (schedule.end && date > schedule.end)) return false;
+  if (schedule.frequency === "Daily") return true;
+  const current = parseLocalDate(date), start = parseLocalDate(schedule.start);
+  if (schedule.frequency === "Weekly") return schedule.weekdays.includes(current.getDay());
+  if (schedule.unit === "days") return (dayNumber(date) - dayNumber(schedule.start)) % schedule.interval === 0;
+  if (schedule.unit === "months") {
+    const months = (current.getFullYear() - start.getFullYear()) * 12 + current.getMonth() - start.getMonth();
+    return months % schedule.interval === 0 && current.getDate() === start.getDate();
+  }
+  const startMonday = dayNumber(schedule.start) - (start.getDay() + 6) % 7;
+  const currentMonday = dayNumber(date) - (current.getDay() + 6) % 7;
+  return ((currentMonday - startMonday) / 7) % schedule.interval === 0 && schedule.weekdays.includes(current.getDay());
+}
+
+function scheduleSummary(schedule: HabitSchedule): string {
+  if (schedule.frequency === "Once") return `${displayDate(schedule.once)} · Does not repeat`;
+  if (schedule.frequency === "Custom" && schedule.customMode === "dates") {
+    return schedule.dates.length ? `${schedule.dates.length} ${schedule.dates.length === 1 ? "date" : "dates"} selected · ${[...schedule.dates].sort().map((date) => parseLocalDate(date).toLocaleDateString("en-US", { month: "short", day: "numeric" })).join(", ")}` : "Choose the dates you want.";
+  }
+  const days = weekdayOrder.filter((day) => schedule.weekdays.includes(day)).map((day) => weekdayNames[day].slice(0, 3)).join(", ");
+  let summary = "Every day";
+  if (schedule.frequency === "Weekly") summary = days ? `Every ${days}` : "Choose at least one weekday.";
+  if (schedule.frequency === "Custom") {
+    summary = `Every ${schedule.interval === 1 ? schedule.unit.slice(0, -1) : `${schedule.interval} ${schedule.unit}`}`;
+    if (schedule.unit === "weeks") summary += days ? ` on ${days}` : " · Choose a weekday";
+    if (schedule.unit === "months") summary += ` on day ${parseLocalDate(schedule.start).getDate()}`;
+  }
+  return `${summary}${schedule.end ? ` · Until ${displayDate(schedule.end)}` : ""}`;
+}
+
+function HabitCalendar({ selected, onSelect, minimum, initial, multiple = false }: {
+  selected: string[]; onSelect: (date: string) => void; minimum: string; initial: string; multiple?: boolean;
+}) {
+  const [month, setMonth] = useState(() => { const date = parseLocalDate(initial); return new Date(date.getFullYear(), date.getMonth(), 1, 12); });
+  const first = month.getDay();
+  const count = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const monthName = month.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const previous = new Date(month.getFullYear(), month.getMonth(), 0, 12);
+  return <section className="habit-calendar" aria-label={multiple ? "Choose calendar dates" : "Choose a calendar date"}>
+    <div className="habit-calendar-header">
+      <button type="button" aria-label="Previous month" disabled={localDate(previous) < minimum} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1, 12))}><ChevronLeftIcon /></button>
+      <strong aria-live="polite">{monthName}</strong>
+      <button type="button" aria-label="Next month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1, 12))}><ChevronRightIcon /></button>
+    </div>
+    <div className="habit-calendar-grid">
+      {weekdayNames.map((day) => <span className="calendar-weekday" key={day} aria-label={day}>{day[0]}</span>)}
+      {Array.from({ length: first }, (_, index) => <span key={`empty-${index}`} />)}
+      {Array.from({ length: count }, (_, index) => {
+        const date = localDate(new Date(month.getFullYear(), month.getMonth(), index + 1, 12));
+        return <button key={date} type="button" aria-label={displayDate(date)} aria-pressed={selected.includes(date)} aria-current={date === localDate() ? "date" : undefined}
+          disabled={date < minimum} className={selected.includes(date) ? "is-selected" : ""} onClick={() => onSelect(date)}>{index + 1}</button>;
+      })}
+    </div>
+  </section>;
+}
+
+function HabitSheet({ open, onClose, onAdd, today }: { open: boolean; onClose: () => void; onAdd: (habit: ScheduledHabit) => string | null; today: string }) {
+  // Keep the shared sheet mounted so its exit animation and focus management run.
+  return <BottomSheet open={open} onOpenChange={(next) => { if (!next) onClose(); }} title="Add habit" description="Give your habit a name and choose when it happens." snap={0.9}>
+    <HabitForm key={open ? "open" : "closed"} onClose={onClose} onAdd={onAdd} today={today} />
+  </BottomSheet>;
+}
+
+function HabitForm({ onClose, onAdd, today }: { onClose: () => void; onAdd: (habit: ScheduledHabit) => string | null; today: string }) {
+  const [name, setName] = useState("");
+  const [schedule, setSchedule] = useState(() => initialSchedule(today));
+  const [picker, setPicker] = useState<"start" | "end" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const keyboard = useKeyboard();
+  const { isKeyboardVisible, bottomInset } = useKeyboardInsets();
+  const customDates = schedule.frequency === "Custom" && schedule.customMode === "dates";
+  const recurring = schedule.frequency !== "Once" && !customDates;
+  const showWeekdays = schedule.frequency === "Weekly" || (schedule.frequency === "Custom" && !customDates && schedule.unit === "weeks");
+  const valid = name.trim().length > 0 && (!showWeekdays || schedule.weekdays.length > 0) &&
+    (!customDates || schedule.dates.length > 0) && (!recurring || !schedule.end || schedule.end >= schedule.start);
+  function update(change: Partial<HabitSchedule>) { keyboard.hide(); setSchedule((current) => ({ ...current, ...change })); setError(null); }
+  function submit() {
+    if (!valid) return;
+    keyboard.hide();
+    setError(onAdd({ id: `habit-${crypto.randomUUID()}`, name: name.trim(), schedule }));
+  }
+  return <form className="habit-form" data-frequency={schedule.frequency} data-keyboard-open={isKeyboardVisible} onSubmit={(event) => { event.preventDefault(); submit(); }}>
+    <button className="habit-sheet-close" type="button" aria-label="Close Add habit" onClick={onClose}><Cross1Icon width={22} height={22} /></button>
+    <div className="habit-form-body">
+      <MobileScroll className="habit-form-scroll">
+        <div className="habit-field habit-name-field">
+          <label htmlFor="new-habit-name">Habit name</label>
+          <KeyboardInput id="new-habit-name" placeholder="e.g. Morning walk" value={name} maxLength={80} autoComplete="off" onBlur={(event) => { if (!event.currentTarget.form?.contains(event.relatedTarget as Node | null)) keyboard.hide(); }} onChange={(event) => { setName(event.target.value); setError(null); }} />
+        </div>
+        <div className="habit-field">
+          <span className="habit-field-label" id="habit-repeat-label">Repeat</span>
+          <div className="habit-repeat-options" role="group" aria-labelledby="habit-repeat-label">
+            {frequencies.map((frequency) => <button type="button" key={frequency} aria-pressed={schedule.frequency === frequency} onClick={() => { update({ frequency }); setPicker(null); }}>{frequency}</button>)}
+          </div>
+        </div>
+        {schedule.frequency === "Custom" && <div className="habit-custom-controls">
+          <div className="habit-custom-tabs" role="group" aria-label="Custom schedule type">
+            <button type="button" aria-pressed={!customDates} onClick={() => { update({ customMode: "rule" }); setPicker(null); }}>Repeat rule</button>
+            <button type="button" aria-pressed={customDates} onClick={() => { update({ customMode: "dates" }); setPicker(null); }}>Choose dates</button>
+          </div>
+          {!customDates && <div className="habit-interval">
+            <span>Every</span>
+            <div className="habit-stepper">
+              <button type="button" aria-label="Decrease repeat interval" disabled={schedule.interval <= 1} onClick={() => update({ interval: schedule.interval - 1 })}><MinusIcon /></button>
+              <output aria-label="Repeat interval">{schedule.interval}</output>
+              <button type="button" aria-label="Increase repeat interval" disabled={schedule.interval >= 99} onClick={() => update({ interval: schedule.interval + 1 })}><PlusIcon /></button>
+            </div>
+            <select aria-label="Repeat unit" value={schedule.unit} onChange={(event) => update({ unit: event.target.value as HabitSchedule["unit"] })}>
+              <option value="days">days</option><option value="weeks">weeks</option><option value="months">months</option>
+            </select>
+          </div>}
+        </div>}
+        {showWeekdays && <div className="habit-field">
+          <span className="habit-field-label" id="habit-days-label">{schedule.frequency === "Weekly" ? "Repeat on" : "On these days"}</span>
+          <div className="habit-weekdays" role="group" aria-labelledby="habit-days-label">
+            {weekdayOrder.map((day) => <button key={day} type="button" aria-label={weekdayNames[day]} aria-pressed={schedule.weekdays.includes(day)} onClick={() => update({ weekdays: schedule.weekdays.includes(day) ? schedule.weekdays.filter((value) => value !== day) : [...schedule.weekdays, day] })}>{weekdayNames[day][0]}</button>)}
+          </div>
+          {!schedule.weekdays.length && <p className="habit-validation">Choose at least one weekday.</p>}
+        </div>}
+        {(customDates || schedule.frequency === "Once") && <div className="habit-field habit-dates-field">
+          <span className="habit-field-label">{customDates ? "Choose your dates" : "Choose a date"}</span>
+          <HabitCalendar key={customDates ? "multiple" : "once"} selected={customDates ? schedule.dates : [schedule.once]} initial={customDates ? schedule.dates[0] || today : schedule.once} minimum={today} multiple={customDates}
+            onSelect={(date) => update(customDates ? { dates: (schedule.dates.includes(date) ? schedule.dates.filter((value) => value !== date) : [...schedule.dates, date]).sort() } : { once: date })} />
+        </div>}
+        {recurring && <>
+          <div className="habit-field">
+            <span className="habit-field-label">Starts</span>
+            <button className="habit-date-row" type="button" aria-label="Change start date" aria-expanded={picker === "start"} onClick={() => { keyboard.hide(); setPicker(picker === "start" ? null : "start"); }}><CalendarIcon width={22} height={22} /><span>{displayDate(schedule.start)}</span><ChevronRightIcon /></button>
+            {picker === "start" && <HabitCalendar key="start" selected={[schedule.start]} initial={schedule.start} minimum={today} onSelect={(start) => { update({ start, ...(schedule.end && schedule.end < start ? { end: start } : {}) }); setPicker(null); }} />}
+          </div>
+          <div className="habit-field">
+            <span className="habit-field-label">Ends</span>
+            <button className="habit-date-row" type="button" aria-label="Change end date" aria-expanded={picker === "end"} onClick={() => { keyboard.hide(); setPicker(picker === "end" ? null : "end"); }}><span>{schedule.end ? displayDate(schedule.end) : "Never"}</span><ChevronRightIcon /></button>
+            {picker === "end" && <>
+              <div className="habit-end-options" role="group" aria-label="End schedule">
+                <button type="button" aria-pressed={!schedule.end} onClick={() => { update({ end: null }); setPicker(null); }}>Never</button>
+                <button type="button" aria-pressed={Boolean(schedule.end)} onClick={() => update({ end: schedule.end || schedule.start })}>On a date</button>
+              </div>
+              {schedule.end && <HabitCalendar key="end" selected={[schedule.end]} initial={schedule.end} minimum={schedule.start} onSelect={(end) => { update({ end }); setPicker(null); }} />}
+            </>}
+          </div>
+          {schedule.frequency === "Custom" && schedule.unit === "months" && parseLocalDate(schedule.start).getDate() > 28 && <p className="habit-validation">Months without day {parseLocalDate(schedule.start).getDate()} are skipped.</p>}
+        </>}
+        <div className="habit-summary"><span className="habit-field-label">Summary</span><p aria-live="polite">{scheduleSummary(schedule)}</p></div>
+      </MobileScroll>
+    </div>
+    <div className="habit-form-footer" style={{ paddingBottom: (isKeyboardVisible ? 0 : bottomInset) + 14 }}>
+      {error && <p className="habit-validation" role="alert">{error}</p>}
+      <button className="habit-save" type="submit" disabled={!valid}>Add habit</button>
+    </div>
+  </form>;
 }
 
 function MorningCheckInOverlay({ savedCheckinId, onSaved, onClose, onComplete, onViewData, transcript, conversationTranscript, onConversationReady, live }: { savedCheckinId: string | null; onSaved: (id: string) => void; onClose: () => void; onComplete: (transcript: string | null) => void; onViewData: () => void; transcript: string | null; conversationTranscript: string | null; onConversationReady: (transcript: string) => void; live: boolean }) {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -14,6 +15,7 @@ from ..services.streaming import streams
 from ..services.analysis import analysis_status, receive_result
 from ..services.amplifier import PulseClient, TERMINAL
 from ..services.conversation import conversation_messages, reply_to_text, text_turn_lock
+from ..services.conversation_context import capture_conversation_context
 
 router = APIRouter(prefix="/v1/checkins", tags=["checkins"])
 
@@ -49,8 +51,10 @@ def require_owned_checkin(checkin_id: str, user_id: str) -> CheckIn:
 @router.post("", status_code=201)
 def create_checkin(user_id: str = Depends(require_user)) -> dict[str, Any]:
     with SessionLocal() as db:
-        checkin = CheckIn(user_id=user_id)
+        checkin = CheckIn(user_id=user_id, started_at=datetime.utcnow())
         db.add(checkin)
+        db.flush()
+        capture_conversation_context(db, checkin)
         db.commit()
         db.refresh(checkin)
         ticket = mint_stream_ticket(checkin.checkin_id, user_id)

@@ -85,7 +85,7 @@ def turn_stream():
 async def test_end_turn_persists_history_and_keeps_recording_paused(turn_stream, monkeypatch):
     stream, events = turn_stream
     calls = []
-    async def reply(self, messages):
+    async def reply(self, messages, *, history_context=None):
         calls.append(messages)
         return {"reply": f"Reply {len(calls)}", "model": "test-sonnet", "raw_response": {
             "id": f"msg-{len(calls)}", "usage": {"cache_read_input_tokens": 512 if len(calls) == 2 else 0,
@@ -127,7 +127,7 @@ async def test_duplicate_end_turn_and_resume_do_not_interrupt_pending_reply(turn
     stream, events = turn_stream
     gate = asyncio.Event()
     calls = []
-    async def reply(self, messages):
+    async def reply(self, messages, *, history_context=None):
         calls.append(messages)
         await gate.wait()
         return {"reply": "Reply", "model": "test-sonnet", "raw_response": {}}
@@ -150,7 +150,7 @@ async def test_duplicate_end_turn_and_resume_do_not_interrupt_pending_reply(turn
 async def test_failed_turn_can_retry_without_duplicate_row(turn_stream, monkeypatch):
     stream, events = turn_stream
     calls = []
-    async def reply(self, messages):
+    async def reply(self, messages, *, history_context=None):
         calls.append(messages)
         if len(calls) == 1:
             raise ConversationError("Sonnet is temporarily unavailable.")
@@ -186,7 +186,7 @@ async def test_save_preserves_turns_and_only_transcribes_remaining_speech(turn_s
             duration = audio.getnframes() / audio.getframerate()
         durations.append(duration)
         return f'Speech {len(durations)} ({duration}s)'
-    async def reply(self, messages):
+    async def reply(self, messages, *, history_context=None):
         calls.append(messages)
         return {'reply': 'Coach reply', 'model': 'test', 'raw_response': {}}
     monkeypatch.setattr(transcriber(), 'transcribe', transcribe)
@@ -238,7 +238,7 @@ async def test_save_without_end_turn_reuses_full_transcript(turn_stream, monkeyp
 async def test_save_after_failed_end_turn_has_no_duplicate_speech(turn_stream, monkeypatch, resume_after_failure):
     from app.api.checkins import checkin_payload
     stream, _ = turn_stream
-    async def reply(self, messages):
+    async def reply(self, messages, *, history_context=None):
         raise ConversationError('Provider unavailable')
     monkeypatch.setattr(SonnetClient, 'reply', reply)
     await stream.start()
@@ -261,7 +261,7 @@ async def test_failed_final_transcription_keeps_prior_exchange_and_completes(tur
     from app.api.checkins import checkin_payload
     from app.services.transcribe import transcriber
     stream, _ = turn_stream
-    async def reply(self, messages):
+    async def reply(self, messages, *, history_context=None):
         return {'reply': 'Earlier reply', 'model': 'test', 'raw_response': {}}
     monkeypatch.setattr(SonnetClient, 'reply', reply)
     await stream.start()
